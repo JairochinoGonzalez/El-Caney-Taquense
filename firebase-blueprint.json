@@ -1,0 +1,274 @@
+{
+  "entities": {
+    "AppConfig": {
+      "title": "AppConfig",
+      "description": "Global operational settings, exchange buffer, and access email lists for El Caney Taquense.",
+      "type": "object",
+      "properties": {
+        "exchangeBufferBs": { "type": "number" },
+        "allowEmployeeProductEdit": { "type": "boolean" },
+        "staffEmails": { "type": "array" },
+        "adminEmails": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["exchangeBufferBs", "allowEmployeeProductEdit", "staffEmails", "adminEmails", "updatedAt"]
+    },
+    "StaffUser": {
+      "title": "StaffUser",
+      "description": "Authorized staff or admin account profile with strict role assignment.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "email": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "role": { "type": "string", "enum": ["admin", "taquilla", "caja", "mesero"] },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "email", "role", "active", "createdAt", "updatedAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Inventory catalog item for El Caney Taquense.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "presentation": { "type": "string", "maxLength": 120 },
+        "photoUrl": { "type": "string", "maxLength": 350000 },
+        "category": { "type": "string", "enum": ["cervezas", "licores", "refrescos", "hielo_otros"] },
+        "unitType": { "type": "string", "enum": ["case_36", "pack", "unit"] },
+        "caseSize": { "type": "number" },
+        "priceUnitUsd": { "type": "number" },
+        "priceCaseUsd": { "type": "number" },
+        "costUnitUsd": { "type": "number" },
+        "costCaseUsd": { "type": "number" },
+        "stockUnits": { "type": "number" },
+        "lowStockThreshold": { "type": "number" },
+        "staffEmails": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "category", "unitType", "caseSize", "priceUnitUsd", "costUnitUsd", "stockUnits", "lowStockThreshold", "staffEmails", "createdAt", "updatedAt"]
+    },
+    "CalendarEvent": {
+      "title": "CalendarEvent",
+      "description": "Scheduled internal fiesta or private rental event.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "date": { "type": "string", "maxLength": 20 },
+        "type": { "type": "string", "enum": ["fiesta", "alquiler"] },
+        "eventSubType": { "type": "string", "maxLength": 80 },
+        "organizer": { "type": "string", "maxLength": 120 },
+        "startTime": { "type": "string", "maxLength": 10 },
+        "endTime": { "type": "string", "maxLength": 10 },
+        "entryPriceUsd": { "type": "number" },
+        "clientName": { "type": "string", "maxLength": 120 },
+        "totalRentalUsd": { "type": "number" },
+        "depositPaidUsd": { "type": "number" },
+        "status": { "type": "string", "enum": ["programado", "en_curso", "finalizado"] },
+        "openedAt": { "type": "string", "maxLength": 40 },
+        "closedAt": { "type": "string", "maxLength": 40 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "staffEmails": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "date", "type", "entryPriceUsd", "totalRentalUsd", "depositPaidUsd", "status", "staffEmails", "createdAt", "updatedAt"]
+    },
+    "SaleRecord": {
+      "title": "SaleRecord",
+      "description": "Barra invoice or Taquilla ticket batch transaction.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "eventId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 40 },
+        "kind": { "type": "string", "enum": ["barra", "taquilla"] },
+        "items": { "type": "array" },
+        "totalUsd": { "type": "number" },
+        "totalBs": { "type": "number" },
+        "bcvRateAtSale": { "type": "number" },
+        "effectiveRateAtSale": { "type": "number" },
+        "bufferBsAtSale": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["efectivo_usd", "zelle", "pago_movil", "tarjeta", "mixto"] },
+        "paymentBreakdown": { "type": "object" },
+        "amountReceivedUsd": { "type": "number" },
+        "amountReceivedBs": { "type": "number" },
+        "changeGivenUsd": { "type": "number" },
+        "changeGivenBs": { "type": "number" },
+        "changeNote": { "type": "string", "maxLength": 200 },
+        "status": { "type": "string", "enum": ["active", "suspended"] },
+        "suspendReason": { "type": "string", "maxLength": 300 },
+        "suspendedAt": { "type": "string", "maxLength": 40 },
+        "suspendedByRole": { "type": "string", "maxLength": 40 },
+        "staffEmails": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "eventId", "timestamp", "kind", "items", "totalUsd", "totalBs", "bcvRateAtSale", "effectiveRateAtSale", "bufferBsAtSale", "paymentMethod", "paymentBreakdown", "status", "staffEmails", "createdAt", "updatedAt"]
+    },
+    "CourtesyRecord": {
+      "title": "CourtesyRecord",
+      "description": "Internal consumption or VIP courtesy record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "eventId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 40 },
+        "recipient": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 250 },
+        "items": { "type": "array" },
+        "totalCostUsd": { "type": "number" },
+        "staffEmails": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "eventId", "timestamp", "recipient", "reason", "items", "totalCostUsd", "staffEmails", "createdAt"]
+    },
+    "ClosedShift": {
+      "title": "ClosedShift",
+      "description": "Consolidated shift closing report visible to staff when closing an event.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "eventId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "eventName": { "type": "string", "maxLength": 120 },
+        "eventDate": { "type": "string", "maxLength": 20 },
+        "eventType": { "type": "string", "enum": ["fiesta", "alquiler"] },
+        "eventSubType": { "type": "string", "maxLength": 80 },
+        "openedAt": { "type": "string", "maxLength": 40 },
+        "closedAt": { "type": "string", "maxLength": 40 },
+        "bcvRate": { "type": "number" },
+        "bufferBs": { "type": "number" },
+        "effectiveRate": { "type": "number" },
+        "totalAttendees": { "type": "number" },
+        "taquillaUsd": { "type": "number" },
+        "barraUsd": { "type": "number" },
+        "totalRevenueUsd": { "type": "number" },
+        "totalRevenueBs": { "type": "number" },
+        "baseBcvRevenueUsd": { "type": "number" },
+        "exchangeSurplusUsd": { "type": "number" },
+        "exchangeSurplusBs": { "type": "number" },
+        "cashUsdTotal": { "type": "number" },
+        "zelleUsdTotal": { "type": "number" },
+        "pagoMovilBsTotal": { "type": "number" },
+        "tarjetaBsTotal": { "type": "number" },
+        "cogsUsd": { "type": "number" },
+        "productsSold": { "type": "array" },
+        "courtesies": { "type": "array" },
+        "suspendedSales": { "type": "array" },
+        "remainingStock": { "type": "array" },
+        "staffEmails": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "eventId", "eventName", "eventDate", "eventType", "openedAt", "closedAt", "totalAttendees", "taquillaUsd", "barraUsd", "totalRevenueUsd", "totalRevenueBs", "staffEmails", "createdAt"]
+    },
+    "PayrollRecord": {
+      "title": "PayrollRecord",
+      "description": "Employee payroll payment record (Admin only).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "employeeName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "role": { "type": "string", "enum": ["Mesero", "Cajero", "Portero", "Limpieza", "Taquilla", "Administrador"] },
+        "amountUsd": { "type": "number" },
+        "date": { "type": "string", "maxLength": 20 },
+        "note": { "type": "string", "maxLength": 200 },
+        "adminEmails": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "employeeName", "role", "amountUsd", "date", "adminEmails", "createdAt"]
+    },
+    "TableOrder": {
+      "title": "TableOrder",
+      "description": "Open or closed table bill created by a waiter (Mesero) and closed by Caja/Admin.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "eventId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "tableName": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "waiterEmail": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "waiterName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "items": { "type": "array" },
+        "subtotalUsd": { "type": "number" },
+        "subtotalBs": { "type": "number" },
+        "status": { "type": "string", "enum": ["open", "ready_to_close", "closed", "cancelled"] },
+        "openedAt": { "type": "string", "maxLength": 40 },
+        "notes": { "type": "string", "maxLength": 300 },
+        "saleId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "paymentMethod": { "type": "string", "enum": ["efectivo_usd", "zelle", "pago_movil", "tarjeta", "mixto"] },
+        "closedByEmail": { "type": "string", "maxLength": 120 },
+        "closedAt": { "type": "string", "maxLength": 40 },
+        "staffEmails": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "eventId", "tableName", "waiterEmail", "waiterName", "items", "subtotalUsd", "subtotalBs", "status", "openedAt", "staffEmails", "createdAt", "updatedAt"]
+    },
+    "StockRestockRecord": {
+      "title": "StockRestockRecord",
+      "description": "Inventory restock purchase invoice record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 40 },
+        "date": { "type": "string", "maxLength": 20 },
+        "productId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "productName": { "type": "string", "maxLength": 120 },
+        "casesAdded": { "type": "number" },
+        "unitsAdded": { "type": "number" },
+        "totalUnitsAdded": { "type": "number" },
+        "totalCostUsd": { "type": "number" },
+        "note": { "type": "string", "maxLength": 200 },
+        "adminEmails": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "timestamp", "date", "productId", "productName", "casesAdded", "unitsAdded", "totalUnitsAdded", "totalCostUsd", "adminEmails", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/appConfig/{configId}": {
+      "schema": { "$ref": "#/entities/AppConfig" },
+      "description": "Singleton app configuration and authorized staff/admin email lists."
+    },
+    "/staffUsers/{userId}": {
+      "schema": { "$ref": "#/entities/StaffUser" },
+      "description": "User accounts created by Admin with role (admin, taquilla, caja, mesero)."
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Bar & cave inventory catalog."
+    },
+    "/events/{eventId}": {
+      "schema": { "$ref": "#/entities/CalendarEvent" },
+      "description": "Scheduled internal fiestas and private rentals."
+    },
+    "/sales/{saleId}": {
+      "schema": { "$ref": "#/entities/SaleRecord" },
+      "description": "Barra and Taquilla sales transactions."
+    },
+    "/tableOrders/{orderId}": {
+      "schema": { "$ref": "#/entities/TableOrder" },
+      "description": "Table bills managed by Mesero and closed/paid at Caja."
+    },
+    "/courtesies/{courtesyId}": {
+      "schema": { "$ref": "#/entities/CourtesyRecord" },
+      "description": "Cortesias and internal consumption records."
+    },
+    "/closedShifts/{shiftId}": {
+      "schema": { "$ref": "#/entities/ClosedShift" },
+      "description": "Closed event summary reports."
+    },
+    "/payroll/{payrollId}": {
+      "schema": { "$ref": "#/entities/PayrollRecord" },
+      "description": "Payroll records restricted to Admins."
+    },
+    "/restocks/{restockId}": {
+      "schema": { "$ref": "#/entities/StockRestockRecord" },
+      "description": "Stock restock records."
+    }
+  }
+}

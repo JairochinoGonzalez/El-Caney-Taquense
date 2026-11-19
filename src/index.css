@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+}
+
+@layer base {
+  html,
+  body {
+    font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+    font-feature-settings: "zero" 0;
+    background-color: #E2E8F0;
+    color: #0F172A;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+  }
+
+  table,
+  th,
+  td,
+  input[type="number"] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "zero" 0;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "zero" 0;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

@@ -1,0 +1,524 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Core Identity & Primitive Helpers ---
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true;
+    }
+
+    function userEmailLower() {
+      return request.auth.token.email.lower();
+    }
+
+    function emailDocId() {
+      return userEmailLower().replace('[^a-z0-9]', '_');
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && userEmailLower() == 'sk8jairo3@gmail.com';
+    }
+
+    function hasStaffDoc() {
+      return isVerifiedUser()
+        && exists(/databases/$(database)/documents/staffUsers/$(emailDocId()));
+    }
+
+    function staffDoc() {
+      return get(/databases/$(database)/documents/staffUsers/$(emailDocId()));
+    }
+
+    function isActiveStaff() {
+      return hasStaffDoc() && staffDoc().data.active == true;
+    }
+
+    function staffRole() {
+      return staffDoc().data.role;
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (isActiveStaff() && staffRole() == 'admin');
+    }
+
+    function isTaquilla() {
+      return isAdmin() || (isActiveStaff() && staffRole() == 'taquilla');
+    }
+
+    function isCaja() {
+      return isAdmin() || (isActiveStaff() && staffRole() == 'caja');
+    }
+
+    function isMesero() {
+      return isAdmin() || (isActiveStaff() && staffRole() == 'mesero');
+    }
+
+    function isStationOperator() {
+      return isTaquilla() || isCaja();
+    }
+
+    function isAnyStaff() {
+      return isAdmin() || (isActiveStaff() && staffRole() in ['taquilla', 'caja', 'mesero']);
+    }
+
+    function isValidEmailList(list, maxLen) {
+      return list is list
+        && list.size() >= 1
+        && list.size() <= maxLen
+        && list[0] is string
+        && list[0].size() <= 120;
+    }
+
+    function configStaffEmails() {
+      return get(/databases/$(database)/documents/appConfig/main).data.staffEmails;
+    }
+
+    function configAdminEmails() {
+      return get(/databases/$(database)/documents/appConfig/main).data.adminEmails;
+    }
+
+    function configAllowsEmployeeEdit() {
+      return get(/databases/$(database)/documents/appConfig/main).data.allowEmployeeProductEdit == true;
+    }
+
+    // --- Validation Blueprints (Anti-Update-Gap) ---
+    function isValidAppConfig(data) {
+      return data.keys().hasAll(['exchangeBufferBs', 'allowEmployeeProductEdit', 'staffEmails', 'adminEmails', 'updatedAt'])
+        && data.keys().hasOnly(['exchangeBufferBs', 'allowEmployeeProductEdit', 'staffEmails', 'adminEmails', 'updatedAt'])
+        && data.exchangeBufferBs is number && data.exchangeBufferBs >= 0 && data.exchangeBufferBs <= 100000
+        && data.allowEmployeeProductEdit is bool
+        && isValidEmailList(data.staffEmails, 30)
+        && isValidEmailList(data.adminEmails, 10)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStaffUser(data) {
+      return data.keys().hasAll(['id', 'name', 'email', 'role', 'active', 'adminEmails', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'email', 'role', 'active', 'adminEmails', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
+        && data.role in ['admin', 'taquilla', 'caja', 'mesero']
+        && data.active is bool
+        && isValidEmailList(data.adminEmails, 10)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'name', 'category', 'unitType', 'caseSize', 'priceUnitUsd', 'costUnitUsd', 'stockUnits', 'lowStockThreshold', 'staffEmails', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'presentation', 'photoUrl', 'category', 'unitType', 'caseSize', 'priceUnitUsd', 'priceCaseUsd', 'costUnitUsd', 'costCaseUsd', 'stockUnits', 'lowStockThreshold', 'staffEmails', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && (!('presentation' in data) || (data.presentation is string && data.presentation.size() <= 120))
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 350000))
+        && data.category in ['cervezas', 'licores', 'refrescos', 'hielo_otros']
+        && data.unitType in ['case_36', 'pack', 'unit']
+        && data.caseSize is number && data.caseSize >= 1 && data.caseSize <= 100
+        && data.priceUnitUsd is number && data.priceUnitUsd >= 0 && data.priceUnitUsd <= 50000
+        && (!('priceCaseUsd' in data) || (data.priceCaseUsd is number && data.priceCaseUsd >= 0 && data.priceCaseUsd <= 100000))
+        && data.costUnitUsd is number && data.costUnitUsd >= 0 && data.costUnitUsd <= 50000
+        && (!('costCaseUsd' in data) || (data.costCaseUsd is number && data.costCaseUsd >= 0 && data.costCaseUsd <= 100000))
+        && data.stockUnits is number && data.stockUnits >= 0 && data.stockUnits <= 1000000
+        && data.lowStockThreshold is number && data.lowStockThreshold >= 0 && data.lowStockThreshold <= 100000
+        && isValidEmailList(data.staffEmails, 30)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidEvent(data) {
+      return data.keys().hasAll(['id', 'name', 'date', 'type', 'entryPriceUsd', 'totalRentalUsd', 'depositPaidUsd', 'status', 'staffEmails', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'date', 'type', 'eventSubType', 'organizer', 'startTime', 'endTime', 'entryPriceUsd', 'clientName', 'totalRentalUsd', 'depositPaidUsd', 'status', 'openedAt', 'closedAt', 'notes', 'staffEmails', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.date is string && data.date.size() >= 8 && data.date.size() <= 20
+        && data.type in ['fiesta', 'alquiler']
+        && (!('eventSubType' in data) || (data.eventSubType is string && data.eventSubType.size() <= 80))
+        && (!('organizer' in data) || (data.organizer is string && data.organizer.size() <= 120))
+        && (!('startTime' in data) || (data.startTime is string && data.startTime.size() <= 10))
+        && (!('endTime' in data) || (data.endTime is string && data.endTime.size() <= 10))
+        && data.entryPriceUsd is number && data.entryPriceUsd >= 0 && data.entryPriceUsd <= 10000
+        && (!('clientName' in data) || (data.clientName is string && data.clientName.size() <= 120))
+        && data.totalRentalUsd is number && data.totalRentalUsd >= 0 && data.totalRentalUsd <= 100000
+        && data.depositPaidUsd is number && data.depositPaidUsd >= 0 && data.depositPaidUsd <= 100000
+        && data.status in ['programado', 'en_curso', 'finalizado']
+        && (!('openedAt' in data) || (data.openedAt is string && data.openedAt.size() <= 40))
+        && (!('closedAt' in data) || (data.closedAt is string && data.closedAt.size() <= 40))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+        && isValidEmailList(data.staffEmails, 30)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll(['id', 'eventId', 'timestamp', 'kind', 'items', 'totalUsd', 'totalBs', 'bcvRateAtSale', 'effectiveRateAtSale', 'bufferBsAtSale', 'paymentMethod', 'paymentBreakdown', 'status', 'staffEmails', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'eventId', 'timestamp', 'kind', 'items', 'totalUsd', 'totalBs', 'bcvRateAtSale', 'effectiveRateAtSale', 'bufferBsAtSale', 'paymentMethod', 'paymentBreakdown', 'amountReceivedUsd', 'amountReceivedBs', 'changeGivenUsd', 'changeGivenBs', 'changeNote', 'status', 'suspendReason', 'suspendedAt', 'suspendedByRole', 'cashierNote', 'staffEmails', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.eventId)
+        && data.timestamp is string && data.timestamp.size() >= 8 && data.timestamp.size() <= 40
+        && data.kind in ['barra', 'taquilla']
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 40 && data.items[0] is map
+        && data.totalUsd is number && data.totalUsd >= 0 && data.totalUsd <= 500000
+        && data.totalBs is number && data.totalBs >= 0 && data.totalBs <= 500000000
+        && data.bcvRateAtSale is number && data.bcvRateAtSale >= 0
+        && data.effectiveRateAtSale is number && data.effectiveRateAtSale >= 0
+        && data.bufferBsAtSale is number && data.bufferBsAtSale >= 0
+        && data.paymentMethod in ['efectivo_usd', 'zelle', 'pago_movil', 'tarjeta', 'mixto']
+        && data.paymentBreakdown is map
+        && (!('amountReceivedUsd' in data) || data.amountReceivedUsd is number)
+        && (!('amountReceivedBs' in data) || data.amountReceivedBs is number)
+        && (!('changeGivenUsd' in data) || data.changeGivenUsd is number)
+        && (!('changeGivenBs' in data) || data.changeGivenBs is number)
+        && (!('changeNote' in data) || (data.changeNote is string && data.changeNote.size() <= 200))
+        && data.status in ['active', 'suspended']
+        && (!('suspendReason' in data) || (data.suspendReason is string && data.suspendReason.size() <= 300))
+        && (!('suspendedAt' in data) || (data.suspendedAt is string && data.suspendedAt.size() <= 40))
+        && (!('suspendedByRole' in data) || (data.suspendedByRole is string && data.suspendedByRole.size() <= 40))
+        && (!('cashierNote' in data) || (data.cashierNote is string && data.cashierNote.size() <= 200))
+        && isValidEmailList(data.staffEmails, 30)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCourtesy(data) {
+      return data.keys().hasAll(['id', 'eventId', 'timestamp', 'recipient', 'reason', 'items', 'totalCostUsd', 'staffEmails', 'createdAt'])
+        && data.keys().hasOnly(['id', 'eventId', 'timestamp', 'recipient', 'reason', 'items', 'totalCostUsd', 'staffEmails', 'createdAt'])
+        && isValidId(data.id)
+        && isValidId(data.eventId)
+        && data.timestamp is string && data.timestamp.size() <= 40
+        && data.recipient is string && data.recipient.size() >= 1 && data.recipient.size() <= 120
+        && data.reason is string && data.reason.size() >= 1 && data.reason.size() <= 250
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 30 && data.items[0] is map
+        && data.totalCostUsd is number && data.totalCostUsd >= 0
+        && isValidEmailList(data.staffEmails, 30)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidClosedShift(data) {
+      return data.keys().hasAll(['id', 'eventId', 'eventName', 'eventDate', 'eventType', 'openedAt', 'closedAt', 'bcvRate', 'bufferBs', 'effectiveRate', 'totalAttendees', 'taquillaUsd', 'barraUsd', 'totalRevenueUsd', 'totalRevenueBs', 'baseBcvRevenueUsd', 'exchangeSurplusUsd', 'exchangeSurplusBs', 'cashUsdTotal', 'zelleUsdTotal', 'pagoMovilBsTotal', 'cogsUsd', 'productsSold', 'courtesies', 'suspendedSales', 'remainingStock', 'staffEmails', 'createdAt'])
+        && data.keys().hasOnly(['id', 'eventId', 'eventName', 'eventDate', 'eventType', 'eventSubType', 'openedAt', 'closedAt', 'bcvRate', 'bufferBs', 'effectiveRate', 'totalAttendees', 'taquillaUsd', 'barraUsd', 'totalRevenueUsd', 'totalRevenueBs', 'baseBcvRevenueUsd', 'exchangeSurplusUsd', 'exchangeSurplusBs', 'cashUsdTotal', 'zelleUsdTotal', 'pagoMovilBsTotal', 'tarjetaBsTotal', 'cogsUsd', 'productsSold', 'courtesies', 'suspendedSales', 'remainingStock', 'staffEmails', 'createdAt'])
+        && isValidId(data.id)
+        && isValidId(data.eventId)
+        && data.eventName is string && data.eventName.size() >= 1 && data.eventName.size() <= 120
+        && data.eventDate is string && data.eventDate.size() <= 20
+        && data.eventType in ['fiesta', 'alquiler']
+        && (!('eventSubType' in data) || (data.eventSubType is string && data.eventSubType.size() <= 80))
+        && data.openedAt is string && data.openedAt.size() <= 40
+        && data.closedAt is string && data.closedAt.size() <= 40
+        && data.totalAttendees is number && data.totalAttendees >= 0
+        && data.taquillaUsd is number && data.taquillaUsd >= 0
+        && data.barraUsd is number && data.barraUsd >= 0
+        && data.totalRevenueUsd is number && data.totalRevenueUsd >= 0
+        && data.totalRevenueBs is number && data.totalRevenueBs >= 0
+        && (!('tarjetaBsTotal' in data) || data.tarjetaBsTotal is number)
+        && data.productsSold is list && data.productsSold.size() <= 150
+        && data.courtesies is list && data.courtesies.size() <= 150
+        && data.suspendedSales is list && data.suspendedSales.size() <= 150
+        && data.remainingStock is list && data.remainingStock.size() <= 150
+        && isValidEmailList(data.staffEmails, 30)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidPayroll(data) {
+      return data.keys().hasAll(['id', 'employeeName', 'role', 'amountUsd', 'date', 'adminEmails', 'createdAt'])
+        && data.keys().hasOnly(['id', 'employeeName', 'role', 'amountUsd', 'date', 'note', 'adminEmails', 'createdAt'])
+        && isValidId(data.id)
+        && data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 100
+        && data.role in ['Mesero', 'Cajero', 'Portero', 'Limpieza', 'Taquilla', 'Administrador']
+        && data.amountUsd is number && data.amountUsd > 0 && data.amountUsd <= 50000
+        && data.date is string && data.date.size() <= 20
+        && (!('note' in data) || (data.note is string && data.note.size() <= 200))
+        && isValidEmailList(data.adminEmails, 10)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTableOrder(data) {
+      return data.keys().hasAll(['id', 'eventId', 'tableName', 'waiterEmail', 'waiterName', 'items', 'subtotalUsd', 'subtotalBs', 'status', 'openedAt', 'staffEmails', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'eventId', 'tableName', 'waiterEmail', 'waiterName', 'items', 'subtotalUsd', 'subtotalBs', 'status', 'openedAt', 'notes', 'saleId', 'paymentMethod', 'closedByEmail', 'closedAt', 'staffEmails', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.eventId)
+        && data.tableName is string && data.tableName.size() >= 1 && data.tableName.size() <= 60
+        && data.waiterEmail is string && data.waiterEmail.size() >= 3 && data.waiterEmail.size() <= 120
+        && data.waiterName is string && data.waiterName.size() >= 1 && data.waiterName.size() <= 80
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 60 && data.items[0] is map
+        && data.subtotalUsd is number && data.subtotalUsd >= 0 && data.subtotalUsd <= 500000
+        && data.subtotalBs is number && data.subtotalBs >= 0 && data.subtotalBs <= 500000000
+        && data.status in ['open', 'ready_to_close', 'closed', 'cancelled']
+        && data.openedAt is string && data.openedAt.size() >= 8 && data.openedAt.size() <= 40
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 300))
+        && (!('saleId' in data) || isValidId(data.saleId))
+        && (!('paymentMethod' in data) || data.paymentMethod in ['efectivo_usd', 'zelle', 'pago_movil', 'tarjeta', 'mixto'])
+        && (!('closedByEmail' in data) || (data.closedByEmail is string && data.closedByEmail.size() <= 120))
+        && (!('closedAt' in data) || (data.closedAt is string && data.closedAt.size() <= 40))
+        && isValidEmailList(data.staffEmails, 30)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRestock(data) {
+      return data.keys().hasAll(['id', 'timestamp', 'date', 'productId', 'productName', 'casesAdded', 'unitsAdded', 'totalUnitsAdded', 'totalCostUsd', 'adminEmails', 'createdAt'])
+        && data.keys().hasOnly(['id', 'timestamp', 'date', 'productId', 'productName', 'casesAdded', 'unitsAdded', 'totalUnitsAdded', 'totalCostUsd', 'note', 'adminEmails', 'createdAt'])
+        && isValidId(data.id)
+        && data.timestamp is string && data.timestamp.size() <= 40
+        && data.date is string && data.date.size() <= 20
+        && isValidId(data.productId)
+        && data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120
+        && data.casesAdded is number && data.casesAdded >= 0
+        && data.unitsAdded is number && data.unitsAdded >= 0
+        && data.totalUnitsAdded is number && data.totalUnitsAdded >= 1
+        && data.totalCostUsd is number && data.totalCostUsd >= 0
+        && (!('note' in data) || (data.note is string && data.note.size() <= 200))
+        && isValidEmailList(data.adminEmails, 10)
+        && data.createdAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    // Connection test doc
+    match /test/connection {
+      allow get: if isSignedIn();
+    }
+
+    // Global App Configuration
+    match /appConfig/{configId} {
+      allow get: if isValidId(configId) && configId == 'main' && isAnyStaff();
+      allow list: if false;
+      allow create, update: if isValidId(configId) && configId == 'main'
+        && isValidAppConfig(incoming())
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow delete: if false;
+    }
+
+    // Staff / User Accounts (PII isolated)
+    match /staffUsers/{userId} {
+      allow get: if isValidId(userId) && (isAdmin() || (isVerifiedUser() && userId == emailDocId()));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && (
+        resource.data.email == userEmailLower() ||
+        userEmailLower() in resource.data.adminEmails
+      ));
+      allow create: if isValidId(userId)
+        && isValidStaffUser(incoming())
+        && incoming().id == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow update: if isValidId(userId)
+        && isValidStaffUser(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin();
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // Inventory Products
+    match /products/{productId} {
+      allow get: if isValidId(productId) && isAnyStaff();
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && userEmailLower() in resource.data.staffEmails);
+      allow create: if isValidId(productId)
+        && isValidProduct(incoming())
+        && incoming().id == productId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (isAdmin() || (isStationOperator() && incoming().staffEmails == configStaffEmails()));
+      allow update: if isValidId(productId)
+        && isValidProduct(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (isStationOperator() && incoming().diff(existing()).affectedKeys().hasOnly(['stockUnits', 'costUnitUsd', 'costCaseUsd', 'updatedAt'])) ||
+          (isStationOperator() && configAllowsEmployeeEdit() && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'presentation', 'photoUrl', 'category', 'unitType', 'caseSize', 'priceUnitUsd', 'priceCaseUsd', 'costUnitUsd', 'costCaseUsd', 'stockUnits', 'updatedAt']))
+        );
+      allow delete: if isValidId(productId) && isAdmin();
+    }
+
+    // Events Calendar
+    match /events/{eventId} {
+      allow get: if isValidId(eventId) && isAnyStaff();
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && userEmailLower() in resource.data.staffEmails);
+      allow create: if isValidId(eventId)
+        && isValidEvent(incoming())
+        && incoming().id == eventId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (isAdmin() || (isStationOperator() && incoming().staffEmails == configStaffEmails()));
+      allow update: if isValidId(eventId)
+        && isValidEvent(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (isStationOperator() && existing().status != 'finalizado' && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'date', 'type', 'eventSubType', 'organizer', 'startTime', 'endTime', 'entryPriceUsd', 'clientName', 'totalRentalUsd', 'depositPaidUsd', 'status', 'openedAt', 'closedAt', 'notes', 'updatedAt']))
+        );
+      allow delete: if isValidId(eventId) && isAdmin();
+    }
+
+    // Sales (Barra & Taquilla)
+    match /sales/{saleId} {
+      allow get: if isValidId(saleId) && isAnyStaff();
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && userEmailLower() in resource.data.staffEmails);
+      allow create: if isValidId(saleId)
+        && isValidSale(incoming())
+        && incoming().id == saleId
+        && (incoming().status == 'active' || (isAdmin() && incoming().status == 'suspended'))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          exists(/databases/$(database)/documents/events/$(incoming().eventId)) ||
+          existsAfter(/databases/$(database)/documents/events/$(incoming().eventId))
+        )
+        && (
+          isAdmin() ||
+          (isTaquilla() && incoming().kind == 'taquilla' && incoming().staffEmails == configStaffEmails()) ||
+          (isCaja() && incoming().kind == 'barra' && incoming().staffEmails == configStaffEmails())
+        );
+      allow update: if isValidId(saleId)
+        && isValidSale(incoming())
+        && incoming().id == existing().id
+        && incoming().eventId == existing().eventId
+        && incoming().kind == existing().kind
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().status == 'active'
+            && incoming().status == 'suspended'
+            && incoming().suspendReason is string && incoming().suspendReason.size() >= 5
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'suspendReason', 'suspendedAt', 'suspendedByRole', 'updatedAt'])
+            && ((isTaquilla() && existing().kind == 'taquilla') || (isCaja() && existing().kind == 'barra'))
+          )
+        );
+      allow delete: if isValidId(saleId) && isAdmin();
+    }
+
+    // Table Orders (Managed by Mesero; closed/paid atomically by Caja or Admin)
+    match /tableOrders/{orderId} {
+      allow get: if isValidId(orderId) && isAnyStaff();
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && userEmailLower() in resource.data.staffEmails);
+      allow create: if isValidId(orderId)
+        && isValidTableOrder(incoming())
+        && incoming().id == orderId
+        && incoming().status == 'open'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          exists(/databases/$(database)/documents/events/$(incoming().eventId)) ||
+          existsAfter(/databases/$(database)/documents/events/$(incoming().eventId))
+        )
+        && (
+          isAdmin() ||
+          (isMesero() && incoming().waiterEmail == userEmailLower() && incoming().staffEmails == configStaffEmails())
+        );
+      allow update: if isValidId(orderId)
+        && isValidTableOrder(incoming())
+        && incoming().id == existing().id
+        && incoming().eventId == existing().eventId
+        && incoming().waiterEmail == existing().waiterEmail
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            isMesero()
+            && existing().status in ['open', 'ready_to_close']
+            && incoming().status in ['open', 'ready_to_close']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['tableName', 'items', 'subtotalUsd', 'subtotalBs', 'status', 'notes', 'updatedAt'])
+          ) ||
+          (
+            isCaja()
+            && existing().status in ['open', 'ready_to_close']
+            && incoming().status in ['closed', 'cancelled']
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'saleId', 'paymentMethod', 'closedByEmail', 'closedAt', 'updatedAt'])
+            && (
+              incoming().status == 'cancelled' ||
+              (incoming().saleId is string && existsAfter(/databases/$(database)/documents/sales/$(incoming().saleId)))
+            )
+          )
+        );
+      allow delete: if isValidId(orderId) && isAdmin();
+    }
+
+    // Courtesies (Caja or Admin)
+    match /courtesies/{courtesyId} {
+      allow get: if isValidId(courtesyId) && isAnyStaff();
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && userEmailLower() in resource.data.staffEmails);
+      allow create: if isValidId(courtesyId)
+        && isValidCourtesy(incoming())
+        && incoming().id == courtesyId
+        && incoming().createdAt == request.time
+        && (
+          exists(/databases/$(database)/documents/events/$(incoming().eventId)) ||
+          existsAfter(/databases/$(database)/documents/events/$(incoming().eventId))
+        )
+        && (isAdmin() || (isCaja() && incoming().staffEmails == configStaffEmails()));
+      allow update, delete: if isValidId(courtesyId) && isAdmin();
+    }
+
+    // Closed Shifts (Visible to Admin, Taquilla, Caja & Mesero when event closes)
+    match /closedShifts/{shiftId} {
+      allow get: if isValidId(shiftId) && isAnyStaff();
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && userEmailLower() in resource.data.staffEmails);
+      allow create: if isValidId(shiftId)
+        && isValidClosedShift(incoming())
+        && incoming().id == shiftId
+        && incoming().createdAt == request.time
+        && (
+          exists(/databases/$(database)/documents/events/$(incoming().eventId)) ||
+          existsAfter(/databases/$(database)/documents/events/$(incoming().eventId))
+        )
+        && (isAdmin() || (isStationOperator() && incoming().staffEmails == configStaffEmails()));
+      allow update, delete: if isValidId(shiftId) && isAdmin();
+    }
+
+    // Payroll (Strictly Admin Only)
+    match /payroll/{payrollId} {
+      allow get: if isValidId(payrollId) && isAdmin();
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && userEmailLower() in resource.data.adminEmails);
+      allow create: if isValidId(payrollId)
+        && isValidPayroll(incoming())
+        && incoming().id == payrollId
+        && incoming().createdAt == request.time
+        && isAdmin();
+      allow update, delete: if isValidId(payrollId) && isAdmin();
+    }
+
+    // Stock Restocks (Station operators can create upon receiving stock; Admin reads all)
+    match /restocks/{restockId} {
+      allow get: if isValidId(restockId) && isAdmin();
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && userEmailLower() in resource.data.adminEmails);
+      allow create: if isValidId(restockId)
+        && isValidRestock(incoming())
+        && incoming().id == restockId
+        && incoming().createdAt == request.time
+        && (isAdmin() || (isStationOperator() && incoming().adminEmails == configAdminEmails()));
+      allow update, delete: if isValidId(restockId) && isAdmin();
+    }
+  }
+}
