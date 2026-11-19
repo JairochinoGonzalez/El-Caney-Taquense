@@ -11,7 +11,6 @@ import {
   Mail,
   RefreshCw,
   ShieldCheck,
-  Store,
 } from 'lucide-react';
 import {
   createUserWithEmailAndPassword,
@@ -21,6 +20,7 @@ import {
   signInWithPopup,
 } from 'firebase/auth';
 import { auth, BOOTSTRAP_ADMIN_EMAIL, googleProvider } from '../firebase';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface LoginScreenProps {
   authLoading: boolean;
@@ -190,9 +190,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     <div className="min-h-screen bg-[#E2E8F0] flex items-center justify-center p-4">
       <div className="bg-white w-full max-w-md rounded-2xl border border-[#CBD5E1] shadow-xl overflow-hidden">
         <div className="bg-[#0F172A] text-white px-6 py-5 flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-xl bg-[#10B981] text-white flex items-center justify-center shrink-0">
-            <Store className="w-6 h-6" />
-          </div>
+          <img
+            src="/logo.png"
+            alt="El Caney Taquense"
+            className="w-13 h-13 rounded-xl object-contain shrink-0 border border-amber-400/25 shadow-xs"
+          />
           <div>
             <h1 className="font-display font-bold text-xl tracking-tight">
               EL CANEY TAQUENSE
@@ -491,6 +493,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 <strong>Mesero</strong> (Mesas y Pedidos) ·{' '}
                 <strong>Admin</strong> (Control total y Finanzas).
               </div>
+
+              <PWAInstallButton />
             </>
           )}
         </div>

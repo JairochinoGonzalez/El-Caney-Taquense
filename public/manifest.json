@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "El Caney Taquense",
+  "short_name": "El Caney",
+  "description": "Sistema operativo y financiero en tiempo real para bar, tasca y salón de eventos El Caney Taquense en Los Taques, Venezuela.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0F172A",
+  "background_color": "#0F172A",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -9,12 +9,12 @@ import {
   RefreshCw,
   Settings,
   ShieldCheck,
-  Store,
   Ticket,
   Zap,
 } from 'lucide-react';
 import { AppSection, BcvRateState, CalendarEvent, UserRole } from '../types';
 import { formatBs } from '../utils/formatters';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface SidebarAndNavProps {
   actualRole: UserRole;
@@ -132,10 +132,12 @@ export const SidebarAndNav: React.FC<SidebarAndNavProps> = ({
       {/* Fixed Left Sidebar for iPad Landscape & Desktop */}
       <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0 lg:left-0 bg-white border-r border-[#CBD5E1] z-30">
         <div className="px-5 py-5 border-b border-[#CBD5E1]">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-[#0F172A] text-white flex items-center justify-center shrink-0">
-              <Store className="w-5 h-5" />
-            </div>
+          <div className="flex items-center gap-3">
+            <img
+              src="/logo.png"
+              alt="El Caney Taquense"
+              className="w-10 h-10 rounded-xl object-contain shrink-0 shadow-xs"
+            />
             <div className="min-w-0">
               <h1 className="font-display font-bold text-base tracking-tight text-[#0F172A] truncate">
                 EL CANEY TAQUENSE
@@ -243,6 +245,8 @@ export const SidebarAndNav: React.FC<SidebarAndNavProps> = ({
               <LogOut className="w-4 h-4" />
             </button>
           </div>
+
+          <PWAInstallButton />
         </div>
       </aside>
 
@@ -251,9 +255,11 @@ export const SidebarAndNav: React.FC<SidebarAndNavProps> = ({
         <div className="px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3">
           {/* Brand on Mobile/Tablet + Section Context */}
           <div className="flex items-center gap-3 min-w-0">
-            <div className="lg:hidden w-8 h-8 rounded-lg bg-[#0F172A] text-white flex items-center justify-center shrink-0">
-              <Store className="w-4 h-4" />
-            </div>
+            <img
+              src="/logo.png"
+              alt="El Caney Taquense"
+              className="lg:hidden w-9 h-9 rounded-lg object-contain shrink-0 shadow-xs"
+            />
             <div className="min-w-0">
               <div className="lg:hidden font-display font-bold text-sm text-[#0F172A] truncate">
                 EL CANEY TAQUENSE
@@ -279,6 +285,9 @@ export const SidebarAndNav: React.FC<SidebarAndNavProps> = ({
 
           {/* Admin Role Preview Switcher OR Locked Station Badge + Mobile Refresh/SignOut */}
           <div className="flex items-center gap-2 shrink-0">
+            <div className="lg:hidden">
+              <PWAInstallButton compact />
+            </div>
             <button
               type="button"
               onClick={onRefreshBcv}
