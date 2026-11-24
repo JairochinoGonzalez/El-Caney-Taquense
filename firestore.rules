@@ -117,13 +117,14 @@ service cloud.firestore {
 
     function isValidStaffUser(data) {
       return data.keys().hasAll(['id', 'name', 'email', 'role', 'active', 'adminEmails', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'name', 'email', 'role', 'active', 'adminEmails', 'passwordUpdatedAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'email', 'role', 'active', 'adminEmails', 'quickPin', 'passwordUpdatedAt', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
         && data.role in ['admin', 'taquilla', 'caja', 'mesero']
         && data.active is bool
         && isValidEmailList(data.adminEmails, 10)
+        && (!('quickPin' in data) || (data.quickPin is string && data.quickPin.size() == 4 && data.quickPin.matches('^[0-9]{4}$')))
         && (!('passwordUpdatedAt' in data) || (data.passwordUpdatedAt is string && data.passwordUpdatedAt.size() <= 40))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -281,18 +282,42 @@ service cloud.firestore {
 
     function isValidRestock(data) {
       return data.keys().hasAll(['id', 'timestamp', 'date', 'productId', 'productName', 'casesAdded', 'unitsAdded', 'totalUnitsAdded', 'totalCostUsd', 'adminEmails', 'createdAt'])
-        && data.keys().hasOnly(['id', 'timestamp', 'date', 'productId', 'productName', 'casesAdded', 'unitsAdded', 'totalUnitsAdded', 'totalCostUsd', 'note', 'adminEmails', 'createdAt'])
+        && data.keys().hasOnly(['id', 'timestamp', 'date', 'productId', 'productName', 'movementType', 'casesAdded', 'unitsAdded', 'totalUnitsAdded', 'totalCostUsd', 'totalCostBs', 'note', 'invoiceNumber', 'recordedByEmail', 'recordedByName', 'invoiceAttachmentName', 'invoiceAttachmentType', 'invoiceAttachmentMime', 'invoiceAttachmentSizeBytes', 'invoiceAttachmentDataUrl', 'invoiceAttachmentChunkCount', 'adminEmails', 'staffEmails', 'createdAt'])
         && isValidId(data.id)
         && data.timestamp is string && data.timestamp.size() <= 40
         && data.date is string && data.date.size() <= 20
         && isValidId(data.productId)
         && data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120
+        && (!('movementType' in data) || data.movementType in ['nuevo_producto', 'reposicion'])
         && data.casesAdded is number && data.casesAdded >= 0
         && data.unitsAdded is number && data.unitsAdded >= 0
-        && data.totalUnitsAdded is number && data.totalUnitsAdded >= 1
+        && data.totalUnitsAdded is number && data.totalUnitsAdded >= 0
         && data.totalCostUsd is number && data.totalCostUsd >= 0
+        && (!('totalCostBs' in data) || (data.totalCostBs is number && data.totalCostBs >= 0 && data.totalCostBs <= 500000000))
         && (!('note' in data) || (data.note is string && data.note.size() <= 200))
+        && (!('invoiceNumber' in data) || (data.invoiceNumber is string && data.invoiceNumber.size() <= 120))
+        && (!('recordedByEmail' in data) || (data.recordedByEmail is string && data.recordedByEmail.size() <= 120))
+        && (!('recordedByName' in data) || (data.recordedByName is string && data.recordedByName.size() <= 80))
+        && (!('invoiceAttachmentName' in data) || (data.invoiceAttachmentName is string && data.invoiceAttachmentName.size() <= 180))
+        && (!('invoiceAttachmentType' in data) || data.invoiceAttachmentType in ['image', 'pdf'])
+        && (!('invoiceAttachmentMime' in data) || data.invoiceAttachmentMime in ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'])
+        && (!('invoiceAttachmentSizeBytes' in data) || (data.invoiceAttachmentSizeBytes is number && data.invoiceAttachmentSizeBytes >= 1 && data.invoiceAttachmentSizeBytes <= 2097152))
+        && (!('invoiceAttachmentDataUrl' in data) || (data.invoiceAttachmentDataUrl is string && data.invoiceAttachmentDataUrl.size() <= 700000))
+        && (!('invoiceAttachmentChunkCount' in data) || (data.invoiceAttachmentChunkCount is number && data.invoiceAttachmentChunkCount >= 0 && data.invoiceAttachmentChunkCount <= 5))
         && isValidEmailList(data.adminEmails, 10)
+        && (!('staffEmails' in data) || isValidEmailList(data.staffEmails, 30))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidRestockChunk(data) {
+      return data.keys().hasAll(['id', 'restockId', 'chunkIndex', 'data', 'adminEmails', 'staffEmails', 'createdAt'])
+        && data.keys().hasOnly(['id', 'restockId', 'chunkIndex', 'data', 'adminEmails', 'staffEmails', 'createdAt'])
+        && isValidId(data.id)
+        && isValidId(data.restockId)
+        && data.chunkIndex is number && data.chunkIndex >= 0 && data.chunkIndex <= 4
+        && data.data is string && data.data.size() >= 1 && data.data.size() <= 700000
+        && isValidEmailList(data.adminEmails, 10)
+        && isValidEmailList(data.staffEmails, 30)
         && data.createdAt is timestamp;
     }
 
@@ -511,16 +536,69 @@ service cloud.firestore {
       allow update, delete: if isValidId(payrollId) && isAdmin();
     }
 
-    // Stock Restocks (Station operators can create upon receiving stock; Admin reads all)
+    // Stock Restocks & Purchase Invoices (Station operators & Admin can log and inspect inventory movements)
     match /restocks/{restockId} {
-      allow get: if isValidId(restockId) && isAdmin();
-      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && userEmailLower() in resource.data.adminEmails);
+      allow get: if isValidId(restockId) && (isAdmin() || isStationOperator());
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && (
+        userEmailLower() in resource.data.adminEmails ||
+        ('staffEmails' in resource.data && userEmailLower() in resource.data.staffEmails)
+      ));
       allow create: if isValidId(restockId)
         && isValidRestock(incoming())
         && incoming().id == restockId
         && incoming().createdAt == request.time
-        && (isAdmin() || (isStationOperator() && incoming().adminEmails == configAdminEmails()));
-      allow update, delete: if isValidId(restockId) && isAdmin();
+        && (
+          exists(/databases/$(database)/documents/products/$(incoming().productId)) ||
+          existsAfter(/databases/$(database)/documents/products/$(incoming().productId))
+        )
+        && (
+          isAdmin() ||
+          (
+            isStationOperator()
+            && incoming().adminEmails == configAdminEmails()
+            && (!('staffEmails' in incoming()) || incoming().staffEmails == configStaffEmails())
+          )
+        );
+      allow update: if isValidId(restockId)
+        && isValidRestock(incoming())
+        && incoming().id == existing().id
+        && incoming().productId == existing().productId
+        && incoming().createdAt == existing().createdAt
+        && isAdmin();
+      allow delete: if isValidId(restockId) && isAdmin();
+
+      // Chunked PDF Invoice Attachments (up to 2 MB PDFs)
+      match /attachmentChunks/{chunkId} {
+        allow get: if isValidId(restockId) && isValidId(chunkId) && (isAdmin() || isStationOperator());
+        allow list: if isBootstrappedAdmin() || (isVerifiedUser() && (
+          userEmailLower() in resource.data.adminEmails ||
+          userEmailLower() in resource.data.staffEmails
+        ));
+        allow create: if isValidId(restockId) && isValidId(chunkId)
+          && isValidRestockChunk(incoming())
+          && incoming().id == chunkId
+          && incoming().restockId == restockId
+          && incoming().createdAt == request.time
+          && (
+            exists(/databases/$(database)/documents/restocks/$(restockId)) ||
+            existsAfter(/databases/$(database)/documents/restocks/$(restockId))
+          )
+          && (
+            isAdmin() ||
+            (
+              isStationOperator()
+              && incoming().adminEmails == configAdminEmails()
+              && incoming().staffEmails == configStaffEmails()
+            )
+          );
+        allow update: if isValidId(restockId) && isValidId(chunkId)
+          && isValidRestockChunk(incoming())
+          && incoming().id == existing().id
+          && incoming().restockId == existing().restockId
+          && incoming().createdAt == existing().createdAt
+          && isAdmin();
+        allow delete: if isValidId(restockId) && isValidId(chunkId) && isAdmin();
+      }
     }
   }
 }

@@ -25,6 +25,7 @@
         "role": { "type": "string", "enum": ["admin", "taquilla", "caja", "mesero"] },
         "active": { "type": "boolean" },
         "adminEmails": { "type": "array" },
+        "quickPin": { "type": "string", "pattern": "^[0-9]{4}$", "minLength": 4, "maxLength": 4 },
         "passwordUpdatedAt": { "type": "string", "maxLength": 40 },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -213,7 +214,7 @@
     },
     "StockRestockRecord": {
       "title": "StockRestockRecord",
-      "description": "Inventory restock purchase invoice record.",
+      "description": "Inventory movement and purchase invoice record (new product or stock restock).",
       "type": "object",
       "properties": {
         "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
@@ -221,15 +222,42 @@
         "date": { "type": "string", "maxLength": 20 },
         "productId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
         "productName": { "type": "string", "maxLength": 120 },
+        "movementType": { "type": "string", "enum": ["nuevo_producto", "reposicion"] },
         "casesAdded": { "type": "number" },
         "unitsAdded": { "type": "number" },
         "totalUnitsAdded": { "type": "number" },
         "totalCostUsd": { "type": "number" },
+        "totalCostBs": { "type": "number" },
         "note": { "type": "string", "maxLength": 200 },
+        "invoiceNumber": { "type": "string", "maxLength": 120 },
+        "recordedByEmail": { "type": "string", "maxLength": 120 },
+        "recordedByName": { "type": "string", "maxLength": 80 },
+        "invoiceAttachmentName": { "type": "string", "maxLength": 180 },
+        "invoiceAttachmentType": { "type": "string", "enum": ["image", "pdf"] },
+        "invoiceAttachmentMime": { "type": "string", "enum": ["image/jpeg", "image/png", "image/webp", "application/pdf"] },
+        "invoiceAttachmentSizeBytes": { "type": "number" },
+        "invoiceAttachmentDataUrl": { "type": "string", "maxLength": 700000 },
+        "invoiceAttachmentChunkCount": { "type": "number" },
         "adminEmails": { "type": "array" },
+        "staffEmails": { "type": "array" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "timestamp", "date", "productId", "productName", "casesAdded", "unitsAdded", "totalUnitsAdded", "totalCostUsd", "adminEmails", "createdAt"]
+    },
+    "RestockAttachmentChunk": {
+      "title": "RestockAttachmentChunk",
+      "description": "Chunked base64 segment for PDF purchase invoices between 480 KB and 2 MB stored under a restock record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "restockId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "chunkIndex": { "type": "number" },
+        "data": { "type": "string", "minLength": 1, "maxLength": 700000 },
+        "adminEmails": { "type": "array" },
+        "staffEmails": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "restockId", "chunkIndex", "data", "adminEmails", "staffEmails", "createdAt"]
     }
   },
   "firestore": {
@@ -271,7 +299,11 @@
     },
     "/restocks/{restockId}": {
       "schema": { "$ref": "#/entities/StockRestockRecord" },
-      "description": "Stock restock records."
+      "description": "Stock movement and purchase invoice records."
+    },
+    "/restocks/{restockId}/attachmentChunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/RestockAttachmentChunk" },
+      "description": "Chunked PDF attachment segments for restock purchase invoices."
     }
   }
 }

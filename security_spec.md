@@ -7,6 +7,7 @@
 - PII (`staffUsers` emails) can only be read by `isAdmin()` or by the matching verified user (`resource.data.email == request.auth.token.email.lower()`).
 - List queries NEVER use `get()` or `exists()`; they verify membership directly via `resource.data.staffEmails` / `resource.data.adminEmails` / `resource.data.email`.
 - Client timestamps (`createdAt`, `updatedAt`) MUST equal `request.time`.
+- Inventory movement records (`restocks`) and their optional PDF attachment chunks (`restocks/{restockId}/attachmentChunks`) strictly enforce MIME allowlists (`image/jpeg`, `image/png`, `image/webp`, `application/pdf`), max attachment size (2 MB raw / 700,000 chars per document field), and parent document existence (`exists()`/`existsAfter()`).
 
 ## 2. Adversarial Test Payloads ("Dirty Dozen")
 1. Unauthenticated read on `products` -> PERMISSION_DENIED
@@ -20,4 +21,4 @@
 9. Employee attempting to modify `appConfig/main.exchangeBufferBs` -> PERMISSION_DENIED
 10. Employee attempting to inject a shadow field (`isAdmin: true`) into `products` -> PERMISSION_DENIED
 11. Employee attempting to overwrite immutable `createdAt` or spoof `createdAt != request.time` -> PERMISSION_DENIED
-12. Over-sized ID (> 128 chars or invalid characters) on `events/{eventId}` -> PERMISSION_DENIED
+12. Over-sized ID (> 128 chars or invalid characters) on `events/{eventId}` or invalid MIME (`text/html`) on `restocks/{restockId}` -> PERMISSION_DENIED

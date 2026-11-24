@@ -483,8 +483,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 className="w-full min-h-[48px] px-5 py-2.5 rounded-xl bg-[#1D4ED8] hover:bg-blue-800 disabled:opacity-60 text-white font-display font-bold text-sm flex items-center justify-center gap-2.5 shadow-sm transition-colors"
               >
                 <ShieldCheck className="w-4 h-4" />
-                Entrar con Correo Google
+                Continuar con Google
               </button>
+
+              <div className="p-3 rounded-xl bg-blue-50/80 border border-blue-200 text-xs text-slate-700 leading-relaxed">
+                <strong className="text-[#1D4ED8]">
+                  Acceso con correo @gmail.com:
+                </strong>{' '}
+                Si tu correo autorizado es <strong>@gmail.com</strong>, puedes
+                entrar directamente en 1 clic usando{' '}
+                <strong>“Continuar con Google”</strong> o iniciar sesión con tu
+                correo y clave.
+              </div>
 
               <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#CBD5E1] text-[11px] text-slate-600 leading-relaxed">
                 <strong className="text-[#0F172A]">Estaciones por rol:</strong>{' '}

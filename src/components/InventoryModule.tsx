@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Beer,
@@ -6,9 +6,12 @@ import {
   ClipboardList,
   Download,
   Edit3,
+  FileText,
+  History,
   ImagePlus,
   Lock,
   PackagePlus,
+  Paperclip,
   Plus,
   Search,
   Trash2,
@@ -16,29 +19,50 @@ import {
   X,
 } from 'lucide-react';
 import {
+  InvoiceAttachmentDraft,
   Product,
   ProductCategory,
   ProductUnitType,
+  StockRestockRecord,
   UserRole,
 } from '../types';
 import {
   formatBs,
+  formatDateSpanish,
   formatStockReadable,
+  formatTime,
   formatUsd,
   getCategoryLabel,
   getTodayISO,
 } from '../utils/formatters';
 import { compressImageFile } from '../utils/imageHelper';
+import { hasInvoiceAttachment } from '../utils/invoiceFileHelper';
 import { downloadStockReportPdf } from '../utils/pdfGenerator';
+import { InvoiceAttachmentPicker } from './InvoiceAttachmentPicker';
+import { InvoiceViewerModal } from './InvoiceViewerModal';
 
 interface InventoryModuleProps {
   role: UserRole;
+  actualRole: UserRole;
+  userEmail: string;
   allowEmployeeProductEdit: boolean;
   onToggleAllowEmployeeEdit: (allowed: boolean) => void;
   products: Product[];
+  restocks: StockRestockRecord[];
   bcvRate: number;
   effectiveRate: number;
-  onAddProduct: (product: Omit<Product, 'id'>) => void;
+  onAddProduct: (
+    product: Omit<Product, 'id'>,
+    initialEntry?: {
+      casesAdded: number;
+      unitsAdded: number;
+      totalCostUsd: number;
+      totalCostBs?: number;
+      invoiceNumber?: string;
+      invoiceAttachment?: InvoiceAttachmentDraft | null;
+      date?: string;
+    }
+  ) => void;
   onUpdateProduct: (
     productId: string,
     updates: Partial<Omit<Product, 'id'>>
@@ -48,11 +72,14 @@ interface InventoryModuleProps {
     casesAdded: number;
     unitsAdded: number;
     totalCostUsd: number;
+    totalCostBs?: number;
     newPriceUnitUsd?: number;
     newPriceCaseUsd?: number;
     newCostUnitUsd?: number;
     newCostCaseUsd?: number;
     note?: string;
+    invoiceNumber?: string;
+    invoiceAttachment?: InvoiceAttachmentDraft | null;
     date: string;
   }) => void;
   onDeleteProduct: (productId: string) => void;
@@ -60,9 +87,12 @@ interface InventoryModuleProps {
 
 export const InventoryModule: React.FC<InventoryModuleProps> = ({
   role,
+  actualRole,
+  userEmail,
   allowEmployeeProductEdit,
   onToggleAllowEmployeeEdit,
   products,
+  restocks,
   bcvRate,
   effectiveRate,
   onAddProduct,
@@ -74,6 +104,11 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
   const [categoryFilter, setCategoryFilter] = useState<
     ProductCategory | 'all'
   >('all');
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'with_invoice'>(
+    'all'
+  );
+  const [historySearch, setHistorySearch] = useState('');
+  const historySectionRef = useRef<HTMLDivElement>(null);
 
   const canEditExistingProducts = role === 'admin' || allowEmployeeProductEdit;
 
@@ -84,6 +119,10 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
   const [showStockReportModal, setShowStockReportModal] = useState(false);
   const [confirmDeleteProduct, setConfirmDeleteProduct] =
     useState<Product | null>(null);
+  const [viewingInvoice, setViewingInvoice] = useState<{
+    record: StockRestockRecord;
+    related?: StockRestockRecord[];
+  } | null>(null);
 
   // Restock Form (Invoice in Bs -> converts to USD -> sets Sale Price in USD)
   const [restockProductId, setRestockProductId] = useState<string>(
@@ -95,6 +134,9 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
   const [restockSaleUnitUsd, setRestockSaleUnitUsd] = useState('');
   const [restockSaleCaseUsd, setRestockSaleCaseUsd] = useState('');
   const [restockNote, setRestockNote] = useState('');
+  const [restockInvoiceNumber, setRestockInvoiceNumber] = useState('');
+  const [restockAttachment, setRestockAttachment] =
+    useState<InvoiceAttachmentDraft | null>(null);
 
   // Create / Edit Product Form (Invoice in Bs -> converts to USD -> sets Sale Price in USD)
   const [formName, setFormName] = useState('');
@@ -111,6 +153,41 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
   const [formInvoiceTotalBs, setFormInvoiceTotalBs] = useState<string>('30200');
   const [formPriceUnit, setFormPriceUnit] = useState<string>('1.25');
   const [formPriceCase, setFormPriceCase] = useState<string>('25.00');
+  const [formInvoiceNumber, setFormInvoiceNumber] = useState('');
+  const [formInvoiceAttachment, setFormInvoiceAttachment] =
+    useState<InvoiceAttachmentDraft | null>(null);
+
+  const invoicesByProductId = useMemo(() => {
+    const map = new Map<string, StockRestockRecord[]>();
+    for (const r of restocks) {
+      if (!hasInvoiceAttachment(r)) continue;
+      const list = map.get(r.productId) || [];
+      list.push(r);
+      map.set(r.productId, list);
+    }
+    return map;
+  }, [restocks]);
+
+  const totalInvoicesCount = useMemo(
+    () => restocks.filter((r) => hasInvoiceAttachment(r)).length,
+    [restocks]
+  );
+
+  const filteredRestocks = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    return restocks.filter((r) => {
+      if (historyFilter === 'with_invoice' && !hasInvoiceAttachment(r)) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        r.productName.toLowerCase().includes(q) ||
+        (r.invoiceNumber || '').toLowerCase().includes(q) ||
+        (r.note || '').toLowerCase().includes(q) ||
+        (r.recordedByName || '').toLowerCase().includes(q)
+      );
+    });
+  }, [restocks, historyFilter, historySearch]);
 
   const filteredProducts = products.filter((p) => {
     const matchesSearch =
@@ -145,6 +222,8 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
     setRestockCases('1');
     setRestockUnits('0');
     setRestockNote('');
+    setRestockInvoiceNumber('');
+    setRestockAttachment(null);
     handleSelectRestockProduct(targetId);
     setShowRestockModal(true);
   };
@@ -162,6 +241,8 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
     setFormInvoiceTotalBs((33.0 * bcvRate).toFixed(2));
     setFormPriceUnit('1.25');
     setFormPriceCase('25.00');
+    setFormInvoiceNumber('');
+    setFormInvoiceAttachment(null);
     setShowProductModal(true);
   };
 
@@ -278,23 +359,34 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
             : undefined,
       });
     } else {
-      onAddProduct({
-        name: formName.trim(),
-        presentation: formPresentation.trim() || undefined,
-        photoUrl: formPhotoUrl,
-        category: formCategory,
-        unitType,
-        caseSize: parsedCaseSize,
-        priceUnitUsd: parsedSaleUnit,
-        priceCaseUsd: parsedSaleCase,
-        costUnitUsd: Number(calculatedUnitCost.toFixed(4)),
-        costCaseUsd:
-          calculatedCaseCost !== undefined
-            ? Number(calculatedCaseCost.toFixed(2))
-            : undefined,
-        stockUnits: totalInitialUnits,
-        lowStockThreshold: formIsPack ? parsedCaseSize * 2 : 6,
-      });
+      onAddProduct(
+        {
+          name: formName.trim(),
+          presentation: formPresentation.trim() || undefined,
+          photoUrl: formPhotoUrl,
+          category: formCategory,
+          unitType,
+          caseSize: parsedCaseSize,
+          priceUnitUsd: parsedSaleUnit,
+          priceCaseUsd: parsedSaleCase,
+          costUnitUsd: Number(calculatedUnitCost.toFixed(4)),
+          costCaseUsd:
+            calculatedCaseCost !== undefined
+              ? Number(calculatedCaseCost.toFixed(2))
+              : undefined,
+          stockUnits: totalInitialUnits,
+          lowStockThreshold: formIsPack ? parsedCaseSize * 2 : 6,
+        },
+        {
+          casesAdded: parsedRecCases,
+          unitsAdded: parsedRecUnits,
+          totalCostUsd: convertedInvoiceUsd,
+          totalCostBs: parsedInvoiceBs > 0 ? parsedInvoiceBs : undefined,
+          invoiceNumber: formInvoiceNumber.trim() || undefined,
+          invoiceAttachment: formInvoiceAttachment,
+          date: getTodayISO(),
+        }
+      );
     }
 
     setShowProductModal(false);
@@ -360,6 +452,7 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
       casesAdded: rCases,
       unitsAdded: rUnits,
       totalCostUsd: hasInvoiceBs ? rInvoiceUsdConverted : fallbackCost,
+      totalCostBs: hasInvoiceBs ? rInvoiceBs : undefined,
       newPriceUnitUsd: canEditExistingProducts ? rSaleUnit : undefined,
       newPriceCaseUsd: canEditExistingProducts ? rSaleCase : undefined,
       newCostUnitUsd: hasInvoiceBs
@@ -370,6 +463,8 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
           ? Number(rReceivedCaseUsd.toFixed(2))
           : undefined,
       note: restockNote.trim() || undefined,
+      invoiceNumber: restockInvoiceNumber.trim() || undefined,
+      invoiceAttachment: restockAttachment,
       date: getTodayISO(),
     });
     setShowRestockModal(false);
@@ -414,6 +509,19 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
               className="min-h-[44px] px-4 py-2.5 rounded-xl bg-[#0F172A] hover:bg-slate-800 text-white text-sm font-semibold flex items-center gap-2 transition-colors whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />+ Nuevo Producto
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                historySectionRef.current?.scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'start',
+                })
+              }
+              className="min-h-[44px] px-4 py-2.5 rounded-xl bg-blue-50 border border-blue-200 hover:bg-blue-100 text-[#1D4ED8] text-sm font-bold flex items-center gap-2 transition-colors whitespace-nowrap"
+            >
+              <History className="w-4 h-4" />
+              Historial y Facturas ({restocks.length})
             </button>
             <button
               type="button"
@@ -643,6 +751,41 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                   </div>
                 )}
 
+                {/* Attached Purchase Invoice Indicator on Product Card */}
+                {(() => {
+                  const productInvoices = invoicesByProductId.get(product.id);
+                  if (!productInvoices || productInvoices.length === 0) {
+                    return null;
+                  }
+                  const latestInvoice = productInvoices[0];
+                  return (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setViewingInvoice({
+                          record: latestInvoice,
+                          related: productInvoices,
+                        })
+                      }
+                      className="w-full min-h-[36px] px-2.5 py-1.5 rounded-xl bg-blue-50 border border-blue-200 hover:bg-blue-100 text-[#1D4ED8] text-xs font-bold flex items-center justify-between gap-2 transition-colors"
+                    >
+                      <span className="flex items-center gap-1.5 truncate">
+                        <Paperclip className="w-3.5 h-3.5 shrink-0" />
+                        <span>Ver Factura</span>
+                        {productInvoices.length > 1 && (
+                          <span className="text-[10px] tabular-nums text-blue-700">
+                            ({productInvoices.length})
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-[10px] font-semibold text-blue-700 truncate max-w-[110px]">
+                        {latestInvoice.invoiceNumber ||
+                          formatDateSpanish(latestInvoice.date)}
+                      </span>
+                    </button>
+                  );
+                })()}
+
                 {/* Actions */}
                 <div className="flex items-center gap-1.5 pt-1">
                   <button
@@ -679,6 +822,300 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
           })}
         </div>
       )}
+
+      {/* Historial de Movimientos / Entradas de Inventario y Comprobantes */}
+      <div
+        ref={historySectionRef}
+        className="bg-white border border-[#CBD5E1] shadow-xs rounded-2xl overflow-hidden"
+      >
+        <div className="px-5 py-4 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <History className="w-5 h-5 text-[#1D4ED8]" />
+              <h3 className="font-display font-bold text-lg text-[#0F172A]">
+                Historial de Movimientos / Entradas de Inventario
+              </h3>
+            </div>
+            <p className="text-xs text-slate-600 mt-0.5 tabular-nums">
+              {restocks.length} registro{restocks.length === 1 ? '' : 's'} de
+              entrada · {totalInvoicesCount} con comprobante/factura adjunta
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
+            <div className="inline-flex p-1 bg-slate-100 border border-[#CBD5E1] rounded-xl">
+              <button
+                type="button"
+                onClick={() => setHistoryFilter('all')}
+                className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-bold transition-colors ${
+                  historyFilter === 'all'
+                    ? 'bg-[#0F172A] text-white'
+                    : 'text-slate-600 hover:text-[#0F172A]'
+                }`}
+              >
+                Todos ({restocks.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setHistoryFilter('with_invoice')}
+                className={`min-h-[34px] px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
+                  historyFilter === 'with_invoice'
+                    ? 'bg-[#1D4ED8] text-white'
+                    : 'text-slate-600 hover:text-[#0F172A]'
+                }`}
+              >
+                <Paperclip className="w-3 h-3" />
+                Con Factura ({totalInvoicesCount})
+              </button>
+            </div>
+
+            <div className="relative w-full sm:w-56">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={historySearch}
+                onChange={(e) => setHistorySearch(e.target.value)}
+                placeholder="Buscar producto o factura..."
+                className="w-full min-h-[38px] pl-8 pr-3 py-1.5 bg-white border border-[#CBD5E1] rounded-xl text-xs text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+              />
+            </div>
+          </div>
+        </div>
+
+        {filteredRestocks.length === 0 ? (
+          <div className="p-8 text-center text-sm text-slate-500">
+            {historyFilter === 'with_invoice'
+              ? 'Todavía no hay entradas con factura o comprobante adjunto.'
+              : 'Aún no hay movimientos de entrada registrados en el inventario.'}
+          </div>
+        ) : (
+          <>
+            {/* Desktop Table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    <th className="py-3 px-4">Fecha y Hora</th>
+                    <th className="py-3 px-4">Producto / Movimiento</th>
+                    <th className="py-3 px-4">Cantidad Ingresada</th>
+                    {canEditExistingProducts && (
+                      <th className="py-3 px-4 text-right">Costo / Monto</th>
+                    )}
+                    <th className="py-3 px-4">N° Factura / Proveedor</th>
+                    <th className="py-3 px-4 text-right">Comprobante</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 text-sm">
+                  {filteredRestocks.map((rec) => {
+                    const hasAttachment = hasInvoiceAttachment(rec);
+                    const isPdf = rec.invoiceAttachmentType === 'pdf';
+                    return (
+                      <tr
+                        key={rec.id}
+                        className="hover:bg-slate-50/80 transition-colors"
+                      >
+                        <td className="py-3.5 px-4 tabular-nums whitespace-nowrap">
+                          <div className="font-semibold text-[#0F172A] text-xs">
+                            {formatDateSpanish(rec.date)}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            {formatTime(rec.timestamp)}
+                          </div>
+                        </td>
+
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-bold text-[#0F172A]">
+                              {rec.productName}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                rec.movementType === 'nuevo_producto'
+                                  ? 'bg-blue-50 text-[#1D4ED8] border border-blue-200'
+                                  : 'bg-emerald-50 text-[#065F46] border border-emerald-200'
+                              }`}
+                            >
+                              {rec.movementType === 'nuevo_producto'
+                                ? 'Producto Nuevo'
+                                : 'Entrada Stock'}
+                            </span>
+                          </div>
+                          {rec.recordedByName && (
+                            <div className="text-[11px] text-slate-500 mt-0.5">
+                              Por: {rec.recordedByName}
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="py-3.5 px-4 tabular-nums whitespace-nowrap">
+                          <div className="font-extrabold text-[#059669]">
+                            +{rec.totalUnitsAdded} unid.
+                          </div>
+                          {(rec.casesAdded > 0 || rec.unitsAdded > 0) && (
+                            <div className="text-[11px] text-slate-500">
+                              {rec.casesAdded > 0
+                                ? `${rec.casesAdded} caja${
+                                    rec.casesAdded === 1 ? '' : 's'
+                                  }`
+                                : ''}
+                              {rec.casesAdded > 0 && rec.unitsAdded > 0
+                                ? ' + '
+                                : ''}
+                              {rec.unitsAdded > 0
+                                ? `${rec.unitsAdded} sueltas`
+                                : ''}
+                            </div>
+                          )}
+                        </td>
+
+                        {canEditExistingProducts && (
+                          <td className="py-3.5 px-4 text-right tabular-nums whitespace-nowrap">
+                            <div className="font-bold text-[#0F172A]">
+                              {formatUsd(rec.totalCostUsd)}
+                            </div>
+                            {rec.totalCostBs && rec.totalCostBs > 0 && (
+                              <div className="text-[11px] text-slate-500">
+                                {formatBs(rec.totalCostBs)}
+                              </div>
+                            )}
+                          </td>
+                        )}
+
+                        <td className="py-3.5 px-4 max-w-[220px]">
+                          {rec.invoiceNumber ? (
+                            <div className="font-semibold text-xs text-[#0F172A] truncate">
+                              {rec.invoiceNumber}
+                            </div>
+                          ) : null}
+                          {rec.note ? (
+                            <div className="text-[11px] text-slate-500 truncate">
+                              {rec.note}
+                            </div>
+                          ) : null}
+                          {!rec.invoiceNumber && !rec.note && (
+                            <span className="text-xs text-slate-400">—</span>
+                          )}
+                        </td>
+
+                        <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                          {hasAttachment ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setViewingInvoice({ record: rec })
+                              }
+                              className="min-h-[36px] px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 hover:bg-blue-100 text-[#1D4ED8] text-xs font-bold inline-flex items-center gap-1.5 transition-colors"
+                            >
+                              {isPdf ? (
+                                <FileText className="w-3.5 h-3.5 text-red-600" />
+                              ) : (
+                                <Paperclip className="w-3.5 h-3.5" />
+                              )}
+                              <span>Ver Factura</span>
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-400">
+                              Sin adjunto
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Cards */}
+            <div className="md:hidden divide-y divide-slate-200">
+              {filteredRestocks.map((rec) => {
+                const hasAttachment = hasInvoiceAttachment(rec);
+                const isPdf = rec.invoiceAttachmentType === 'pdf';
+                return (
+                  <div key={rec.id} className="p-4 space-y-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-bold text-sm text-[#0F172A] truncate">
+                          {rec.productName}
+                        </div>
+                        <div className="text-[11px] text-slate-500 tabular-nums mt-0.5">
+                          {formatDateSpanish(rec.date)} ·{' '}
+                          {formatTime(rec.timestamp)}
+                          {rec.recordedByName
+                            ? ` · ${rec.recordedByName}`
+                            : ''}
+                        </div>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 ${
+                          rec.movementType === 'nuevo_producto'
+                            ? 'bg-blue-50 text-[#1D4ED8] border border-blue-200'
+                            : 'bg-emerald-50 text-[#065F46] border border-emerald-200'
+                        }`}
+                      >
+                        {rec.movementType === 'nuevo_producto'
+                          ? 'Producto Nuevo'
+                          : 'Entrada Stock'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums">
+                      <span className="font-extrabold text-[#059669]">
+                        +{rec.totalUnitsAdded} unid.
+                        {rec.casesAdded > 0
+                          ? ` (${rec.casesAdded} caja${
+                              rec.casesAdded === 1 ? '' : 's'
+                            }${
+                              rec.unitsAdded > 0 ? ` + ${rec.unitsAdded} u.` : ''
+                            })`
+                          : ''}
+                      </span>
+                      {canEditExistingProducts && (
+                        <span className="font-bold text-[#0F172A]">
+                          {formatUsd(rec.totalCostUsd)}
+                          {rec.totalCostBs && rec.totalCostBs > 0
+                            ? ` · ${formatBs(rec.totalCostBs)}`
+                            : ''}
+                        </span>
+                      )}
+                    </div>
+
+                    {(rec.invoiceNumber || rec.note) && (
+                      <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                        {rec.invoiceNumber && (
+                          <div className="font-semibold text-[#0F172A]">
+                            {rec.invoiceNumber}
+                          </div>
+                        )}
+                        {rec.note && (
+                          <div className="text-[11px] text-slate-500">
+                            {rec.note}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {hasAttachment && (
+                      <button
+                        type="button"
+                        onClick={() => setViewingInvoice({ record: rec })}
+                        className="w-full min-h-[38px] px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 hover:bg-blue-100 text-[#1D4ED8] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                      >
+                        {isPdf ? (
+                          <FileText className="w-3.5 h-3.5 text-red-600" />
+                        ) : (
+                          <Paperclip className="w-3.5 h-3.5" />
+                        )}
+                        <span>Ver Factura ({isPdf ? 'PDF' : 'Foto'})</span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
 
       {/* Modal: Recibir Mercancía (Factura en Bs -> Conversión a $ -> Precio de Venta en $) */}
       {showRestockModal && (
@@ -840,15 +1277,23 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                 </div>
               )}
 
+              <InvoiceAttachmentPicker
+                invoiceNumber={restockInvoiceNumber}
+                onChangeInvoiceNumber={setRestockInvoiceNumber}
+                attachment={restockAttachment}
+                onChangeAttachment={setRestockAttachment}
+              />
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Nota / Proveedor (Opcional)
+                  Nota adicional (Opcional)
                 </label>
                 <input
                   type="text"
+                  maxLength={200}
                   value={restockNote}
                   onChange={(e) => setRestockNote(e.target.value)}
-                  placeholder="Ej: Camión Polar Los Taques"
+                  placeholder="Ej: Camión Polar Los Taques · Pago en Bs."
                   className="w-full min-h-[44px] px-3.5 py-2 border border-[#CBD5E1] rounded-xl text-sm"
                 />
               </div>
@@ -1178,6 +1623,16 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Optional Purchase Invoice / Receipt (Only on New Product Creation) */}
+              {!editingProduct && (
+                <InvoiceAttachmentPicker
+                  invoiceNumber={formInvoiceNumber}
+                  onChangeInvoiceNumber={setFormInvoiceNumber}
+                  attachment={formInvoiceAttachment}
+                  onChangeAttachment={setFormInvoiceAttachment}
+                />
+              )}
             </div>
 
             <div className="px-5 py-4 bg-slate-100 border-t border-slate-200 flex justify-end gap-2.5">
@@ -1302,6 +1757,17 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
             </div>
           </div>
         </div>
+      )}
+      {/* Invoice / Receipt Viewer Modal */}
+      {viewingInvoice && (
+        <InvoiceViewerModal
+          record={viewingInvoice.record}
+          relatedRecords={viewingInvoice.related}
+          userEmail={userEmail}
+          isAdmin={actualRole === 'admin'}
+          canSeeCost={canEditExistingProducts}
+          onClose={() => setViewingInvoice(null)}
+        />
       )}
     </div>
   );

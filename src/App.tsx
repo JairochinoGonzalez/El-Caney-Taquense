@@ -3,6 +3,7 @@ import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -41,6 +42,7 @@ import {
   ClosedShift,
   CourtesyItem,
   CourtesyRecord,
+  InvoiceAttachmentDraft,
   PaymentBreakdown,
   PaymentMethod,
   PayrollRecord,
@@ -54,7 +56,11 @@ import {
   UserRole,
 } from './types';
 import { FALLBACK_BCV_RATE, fetchOfficialBcvRate } from './utils/bcvService';
-import { snapshotStock } from './utils/formatters';
+import { getTodayISO, snapshotStock } from './utils/formatters';
+import {
+  INLINE_DATAURL_LIMIT,
+  splitDataUrlIntoChunks,
+} from './utils/invoiceFileHelper';
 
 function MainApp() {
   // --- Auth & Authorization State ---
@@ -136,12 +142,15 @@ function MainApp() {
     void refreshBcv();
   }, [refreshBcv]);
 
-  // --- Seed Initial Dataset or Auto-Migrate Ownership on First Admin Login ---
+  // --- Seed Initial Dataset or Auto-Migrate Ownership to Yohelly Bracho ---
   const ensureBootstrappedDatabase = useCallback(
     async (adminUser: User) => {
-      const adminEmail = (adminUser.email || BOOTSTRAP_ADMIN_EMAIL)
+      const callerEmail = (adminUser.email || BOOTSTRAP_ADMIN_EMAIL)
         .trim()
         .toLowerCase();
+      const ownerEmail = BOOTSTRAP_ADMIN_EMAIL.trim().toLowerCase();
+      const isBootstrapCaller = callerEmail === ownerEmail;
+
       const configRef = doc(db, 'appConfig', 'main');
       const configSnap = await getDoc(configRef);
 
@@ -159,24 +168,27 @@ function MainApp() {
             ? cfg.primaryAdminEmail.trim().toLowerCase()
             : null;
 
-        const bootstrapDocId = emailToDocId(adminEmail);
-        const bootstrapStaffRef = doc(db, 'staffUsers', bootstrapDocId);
-        const bootstrapStaffSnap = await getDoc(bootstrapStaffRef);
+        const ownerDocId = emailToDocId(ownerEmail);
+        const ownerStaffRef = doc(db, 'staffUsers', ownerDocId);
+        const ownerStaffSnap = await getDoc(ownerStaffRef);
+
+        const isLegacyPrimary =
+          !existingPrimary || existingPrimary === 'sk8jairo3@gmail.com';
+        const targetPrimary = isLegacyPrimary ? ownerEmail : existingPrimary;
 
         const needsOwnershipSync =
-          !existingPrimary ||
-          !existingAdminEmails.includes(adminEmail) ||
-          !existingStaffEmails.includes(adminEmail) ||
-          !bootstrapStaffSnap.exists();
+          isLegacyPrimary ||
+          !existingAdminEmails.includes(ownerEmail) ||
+          !existingStaffEmails.includes(ownerEmail) ||
+          !ownerStaffSnap.exists();
 
         if (!needsOwnershipSync) return;
 
-        const targetPrimary = existingPrimary || adminEmail;
         const nextStaffEmails = Array.from(
-          new Set([adminEmail, targetPrimary, ...existingStaffEmails])
+          new Set([targetPrimary, ownerEmail, callerEmail, ...existingStaffEmails])
         ).slice(0, 30);
         const nextAdminEmails = Array.from(
-          new Set([adminEmail, targetPrimary, ...existingAdminEmails])
+          new Set([targetPrimary, ownerEmail, callerEmail, ...existingAdminEmails])
         ).slice(0, 10);
 
         await updateDoc(configRef, {
@@ -186,11 +198,14 @@ function MainApp() {
           updatedAt: serverTimestamp(),
         });
 
-        if (!bootstrapStaffSnap.exists()) {
-          await setDoc(bootstrapStaffRef, {
-            id: bootstrapDocId,
-            name: (adminUser.displayName || 'Yohelly Bracho').slice(0, 80),
-            email: adminEmail,
+        if (!ownerStaffSnap.exists()) {
+          await setDoc(ownerStaffRef, {
+            id: ownerDocId,
+            name:
+              isBootstrapCaller && adminUser.displayName
+                ? adminUser.displayName.slice(0, 80)
+                : 'Yohelly Bracho',
+            email: ownerEmail,
             role: 'admin',
             active: true,
             adminEmails: nextAdminEmails,
@@ -198,7 +213,7 @@ function MainApp() {
             updatedAt: serverTimestamp(),
           });
         } else {
-          await updateDoc(bootstrapStaffRef, {
+          await updateDoc(ownerStaffRef, {
             role: 'admin',
             active: true,
             adminEmails: nextAdminEmails,
@@ -221,7 +236,14 @@ function MainApp() {
         }> = [];
 
         for (const col of staffCols) {
-          const snap = await getDocs(collection(db, col));
+          const snap = await getDocs(
+            isBootstrapCaller
+              ? collection(db, col)
+              : query(
+                  collection(db, col),
+                  where('staffEmails', 'array-contains', callerEmail)
+                )
+          );
           snap.docs.forEach((d) => {
             const payload: Record<string, unknown> = {
               staffEmails: nextStaffEmails,
@@ -239,13 +261,23 @@ function MainApp() {
         }
 
         for (const col of adminCols) {
-          const snap = await getDocs(collection(db, col));
+          const snap = await getDocs(
+            isBootstrapCaller
+              ? collection(db, col)
+              : query(
+                  collection(db, col),
+                  where('adminEmails', 'array-contains', callerEmail)
+                )
+          );
           snap.docs.forEach((d) => {
             const payload: Record<string, unknown> = {
               adminEmails: nextAdminEmails,
             };
             if (col === 'staffUsers') {
               payload.updatedAt = serverTimestamp();
+            }
+            if (col === 'restocks') {
+              payload.staffEmails = nextStaffEmails;
             }
             pendingUpdates.push({ ref: d.ref, payload });
           });
@@ -260,25 +292,27 @@ function MainApp() {
         return;
       }
 
+      if (!isBootstrapCaller) return;
+
       const seed = buildInitialData();
-      const initialStaffEmails = [adminEmail];
-      const initialAdminEmails = [adminEmail];
+      const initialStaffEmails = [ownerEmail];
+      const initialAdminEmails = [ownerEmail];
       const batch = writeBatch(db);
 
       batch.set(configRef, {
         exchangeBufferBs: seed.exchangeBufferBs,
         allowEmployeeProductEdit: false,
-        primaryAdminEmail: adminEmail,
+        primaryAdminEmail: ownerEmail,
         staffEmails: initialStaffEmails,
         adminEmails: initialAdminEmails,
         updatedAt: serverTimestamp(),
       });
 
-      const bootstrapDocId = emailToDocId(adminEmail);
+      const bootstrapDocId = emailToDocId(ownerEmail);
       batch.set(doc(db, 'staffUsers', bootstrapDocId), {
         id: bootstrapDocId,
         name: (adminUser.displayName || 'Yohelly Bracho').slice(0, 80),
-        email: adminEmail,
+        email: ownerEmail,
         role: 'admin',
         active: true,
         adminEmails: initialAdminEmails,
@@ -360,7 +394,9 @@ function MainApp() {
           doc(db, 'restocks', rst.id),
           stripUndefined({
             ...rst,
+            movementType: 'reposicion',
             adminEmails: initialAdminEmails,
+            staffEmails: initialStaffEmails,
             createdAt: serverTimestamp(),
           })
         );
@@ -411,12 +447,20 @@ function MainApp() {
           } else {
             const role: UserRole =
               emailLower === BOOTSTRAP_ADMIN_EMAIL ? 'admin' : data.role;
+            if (role === 'admin' && emailLower !== BOOTSTRAP_ADMIN_EMAIL) {
+              try {
+                await ensureBootstrappedDatabase(user);
+              } catch {
+                // Non-blocking ownership sync when a secondary admin signs in
+              }
+            }
             setAuthorizedAccount({
               id: data.id,
               name: data.name,
               email: emailLower,
               role,
               active: true,
+              quickPin: data.quickPin,
             });
             setPreviewRole(role);
             setActiveSection('operacion');
@@ -654,6 +698,21 @@ function MainApp() {
           (err) => reportError(err, OperationType.LIST, 'restocks')
         )
       );
+    } else if (actualRole === 'caja' || actualRole === 'taquilla') {
+      unsubs.push(
+        onSnapshot(
+          query(
+            collection(db, 'restocks'),
+            where('staffEmails', 'array-contains', userEmail)
+          ),
+          (snap) => {
+            const list = snap.docs.map((d) => d.data() as StockRestockRecord);
+            list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+            setRestocks(list);
+          },
+          (err) => reportError(err, OperationType.LIST, 'restocks')
+        )
+      );
     }
 
     return () => {
@@ -788,15 +847,36 @@ function MainApp() {
           where('adminEmails', 'array-contains', userEmail)
         )
       );
-      snap.docs.forEach((d) => {
+      for (const d of snap.docs) {
         const updatePayload: Record<string, unknown> = {
           adminEmails: nextAdminEmails,
         };
         if (col === 'staffUsers') {
           updatePayload.updatedAt = serverTimestamp();
         }
+        if (col === 'restocks') {
+          updatePayload.staffEmails = nextStaffEmails;
+          const chunkCount = Number(d.data()?.invoiceAttachmentChunkCount || 0);
+          if (chunkCount > 0) {
+            const chunksSnap = await getDocs(
+              query(
+                collection(db, 'restocks', d.id, 'attachmentChunks'),
+                where('adminEmails', 'array-contains', userEmail)
+              )
+            );
+            chunksSnap.docs.forEach((cd) => {
+              pendingUpdates.push({
+                ref: cd.ref,
+                payload: {
+                  adminEmails: nextAdminEmails,
+                  staffEmails: nextStaffEmails,
+                },
+              });
+            });
+          }
+        }
         pendingUpdates.push({ ref: d.ref, payload: updatePayload });
-      });
+      }
     }
 
     for (let i = 0; i < pendingUpdates.length; i += 400) {
@@ -992,6 +1072,30 @@ function MainApp() {
     }
   };
 
+  const handleSaveUserQuickPin = async (
+    userId: string,
+    quickPin: string | null
+  ) => {
+    if (actualRole !== 'admin') return;
+    const exists = staffUsers.some((u) => u.id === userId);
+    if (!exists) return;
+
+    const cleanPin = quickPin ? quickPin.replace(/\D/g, '').slice(0, 4) : '';
+    if (cleanPin && cleanPin.length !== 4) {
+      throw new Error('El PIN debe tener exactamente 4 dígitos numéricos.');
+    }
+
+    try {
+      await updateDoc(doc(db, 'staffUsers', userId), {
+        quickPin: cleanPin ? cleanPin : deleteField(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      reportError(err, OperationType.UPDATE, `staffUsers/${userId}`);
+      throw err;
+    }
+  };
+
   const handleToggleAllowEmployeeEdit = async (allowed: boolean) => {
     if (actualRole !== 'admin') return;
     try {
@@ -1017,10 +1121,73 @@ function MainApp() {
   };
 
   // --- Inventory Handlers ---
-  const handleAddProduct = async (prodData: Omit<Product, 'id'>) => {
-    const id = `prod-${Date.now()}`;
+  const attachInvoiceToBatch = (
+    restockId: string,
+    attachment: InvoiceAttachmentDraft | null | undefined,
+    batch: ReturnType<typeof writeBatch>
+  ): Record<string, unknown> => {
+    if (!attachment) return {};
+
+    const cleanName = attachment.name.trim().slice(0, 180) || 'factura';
+    const clampedSize = Math.max(
+      1,
+      Math.min(2097152, Math.round(attachment.sizeBytes || 1))
+    );
+
+    if (attachment.dataUrl.length <= INLINE_DATAURL_LIMIT) {
+      return {
+        invoiceAttachmentName: cleanName,
+        invoiceAttachmentType: attachment.type,
+        invoiceAttachmentMime: attachment.mime,
+        invoiceAttachmentSizeBytes: clampedSize,
+        invoiceAttachmentDataUrl: attachment.dataUrl,
+        invoiceAttachmentChunkCount: 0,
+      };
+    }
+
+    const chunks = splitDataUrlIntoChunks(attachment.dataUrl);
+    chunks.forEach((chunkData, idx) => {
+      const chunkId = `chunk_${idx}`;
+      batch.set(doc(db, 'restocks', restockId, 'attachmentChunks', chunkId), {
+        id: chunkId,
+        restockId,
+        chunkIndex: idx,
+        data: chunkData,
+        adminEmails,
+        staffEmails,
+        createdAt: serverTimestamp(),
+      });
+    });
+
+    return {
+      invoiceAttachmentName: cleanName,
+      invoiceAttachmentType: attachment.type,
+      invoiceAttachmentMime: attachment.mime,
+      invoiceAttachmentSizeBytes: clampedSize,
+      invoiceAttachmentChunkCount: chunks.length,
+    };
+  };
+
+  const handleAddProduct = async (
+    prodData: Omit<Product, 'id'>,
+    initialEntry?: {
+      casesAdded: number;
+      unitsAdded: number;
+      totalCostUsd: number;
+      totalCostBs?: number;
+      invoiceNumber?: string;
+      invoiceAttachment?: InvoiceAttachmentDraft | null;
+      date?: string;
+    }
+  ) => {
+    const now = Date.now();
+    const id = `prod-${now}`;
+    const restockId = `rst-${now}`;
+    const cleanInvoiceNumber = initialEntry?.invoiceNumber?.trim().slice(0, 120);
+
     try {
-      await setDoc(
+      const batch = writeBatch(db);
+      batch.set(
         doc(db, 'products', id),
         stripUndefined({
           ...prodData,
@@ -1030,6 +1197,47 @@ function MainApp() {
           updatedAt: serverTimestamp(),
         })
       );
+
+      const attachmentFields = attachInvoiceToBatch(
+        restockId,
+        initialEntry?.invoiceAttachment,
+        batch
+      );
+
+      const restockPayload = stripUndefined({
+        id: restockId,
+        timestamp: new Date(now).toISOString(),
+        date: initialEntry?.date || getTodayISO(),
+        productId: id,
+        productName: prodData.name.slice(0, 120),
+        movementType: 'nuevo_producto',
+        casesAdded: Math.max(0, initialEntry?.casesAdded ?? 0),
+        unitsAdded: Math.max(0, initialEntry?.unitsAdded ?? prodData.stockUnits),
+        totalUnitsAdded: Math.max(0, prodData.stockUnits),
+        totalCostUsd: Math.max(
+          0,
+          Number(
+            (
+              initialEntry?.totalCostUsd ??
+              prodData.stockUnits * prodData.costUnitUsd
+            ).toFixed(2)
+          )
+        ),
+        totalCostBs:
+          initialEntry?.totalCostBs && initialEntry.totalCostBs > 0
+            ? Number(initialEntry.totalCostBs.toFixed(2))
+            : undefined,
+        invoiceNumber: cleanInvoiceNumber || undefined,
+        recordedByEmail: authorizedAccount?.email?.slice(0, 120),
+        recordedByName: authorizedAccount?.name?.slice(0, 80),
+        ...attachmentFields,
+        adminEmails,
+        staffEmails,
+        createdAt: serverTimestamp(),
+      });
+
+      batch.set(doc(db, 'restocks', restockId), restockPayload);
+      await batch.commit();
     } catch (err) {
       reportError(err, OperationType.CREATE, `products/${id}`);
     }
@@ -1058,11 +1266,14 @@ function MainApp() {
     casesAdded: number;
     unitsAdded: number;
     totalCostUsd: number;
+    totalCostBs?: number;
     newPriceUnitUsd?: number;
     newPriceCaseUsd?: number;
     newCostUnitUsd?: number;
     newCostCaseUsd?: number;
     note?: string;
+    invoiceNumber?: string;
+    invoiceAttachment?: InvoiceAttachmentDraft | null;
     date: string;
   }) => {
     const target = products.find((p) => p.id === params.productId);
@@ -1089,23 +1300,40 @@ function MainApp() {
     }
 
     const restockId = `rst-${Date.now()}`;
-    const restockPayload = stripUndefined({
-      id: restockId,
-      timestamp: new Date().toISOString(),
-      date: params.date,
-      productId: target.id,
-      productName: target.name,
-      casesAdded: params.casesAdded,
-      unitsAdded: params.unitsAdded,
-      totalUnitsAdded,
-      totalCostUsd: params.totalCostUsd,
-      note: params.note,
-      adminEmails,
-      createdAt: serverTimestamp(),
-    });
 
     try {
       const batch = writeBatch(db);
+      const attachmentFields = attachInvoiceToBatch(
+        restockId,
+        params.invoiceAttachment,
+        batch
+      );
+
+      const restockPayload = stripUndefined({
+        id: restockId,
+        timestamp: new Date().toISOString(),
+        date: params.date,
+        productId: target.id,
+        productName: target.name.slice(0, 120),
+        movementType: 'reposicion',
+        casesAdded: params.casesAdded,
+        unitsAdded: params.unitsAdded,
+        totalUnitsAdded,
+        totalCostUsd: Number(params.totalCostUsd.toFixed(2)),
+        totalCostBs:
+          params.totalCostBs && params.totalCostBs > 0
+            ? Number(params.totalCostBs.toFixed(2))
+            : undefined,
+        note: params.note?.trim().slice(0, 200) || undefined,
+        invoiceNumber: params.invoiceNumber?.trim().slice(0, 120) || undefined,
+        recordedByEmail: authorizedAccount?.email?.slice(0, 120),
+        recordedByName: authorizedAccount?.name?.slice(0, 80),
+        ...attachmentFields,
+        adminEmails,
+        staffEmails,
+        createdAt: serverTimestamp(),
+      });
+
       batch.update(doc(db, 'products', target.id), prodUpdates);
       batch.set(doc(db, 'restocks', restockId), restockPayload);
       await batch.commit();
@@ -1841,9 +2069,12 @@ function MainApp() {
           {activeSection === 'inventario' && effectiveRole !== 'mesero' && (
             <InventoryModule
               role={effectiveRole}
+              actualRole={actualRole}
+              userEmail={authorizedAccount.email}
               allowEmployeeProductEdit={allowEmployeeProductEdit}
               onToggleAllowEmployeeEdit={handleToggleAllowEmployeeEdit}
               products={products}
+              restocks={restocks}
               bcvRate={bcvState.officialRate}
               effectiveRate={effectiveRate}
               onAddProduct={handleAddProduct}
@@ -1881,6 +2112,7 @@ function MainApp() {
               onDeleteStaffUser={handleDeleteStaffUser}
               onTransferPrimaryAdmin={handleTransferPrimaryAdmin}
               onMarkUserPasswordUpdated={handleMarkUserPasswordUpdated}
+              onSaveUserQuickPin={handleSaveUserQuickPin}
               previewRole={previewRole}
               onChangePreviewRole={handlePreviewRoleChange}
             />

@@ -13,6 +13,7 @@ export interface StaffUserAccount {
   email: string;
   role: UserRole;
   active: boolean;
+  quickPin?: string;
   passwordUpdatedAt?: string;
 }
 
@@ -149,17 +150,44 @@ export interface CourtesyRecord {
   totalCostUsd: number;
 }
 
+export type InvoiceAttachmentType = 'image' | 'pdf';
+
+export type InvoiceAttachmentMime =
+  | 'image/jpeg'
+  | 'image/png'
+  | 'image/webp'
+  | 'application/pdf';
+
+export interface InvoiceAttachmentDraft {
+  name: string;
+  type: InvoiceAttachmentType;
+  mime: InvoiceAttachmentMime;
+  sizeBytes: number;
+  dataUrl: string;
+}
+
 export interface StockRestockRecord {
   id: string;
   timestamp: string;
   date: string;
   productId: string;
   productName: string;
+  movementType?: 'nuevo_producto' | 'reposicion';
   casesAdded: number;
   unitsAdded: number;
   totalUnitsAdded: number;
   totalCostUsd: number;
+  totalCostBs?: number;
   note?: string;
+  invoiceNumber?: string;
+  recordedByEmail?: string;
+  recordedByName?: string;
+  invoiceAttachmentName?: string;
+  invoiceAttachmentType?: InvoiceAttachmentType;
+  invoiceAttachmentMime?: InvoiceAttachmentMime;
+  invoiceAttachmentSizeBytes?: number;
+  invoiceAttachmentDataUrl?: string;
+  invoiceAttachmentChunkCount?: number;
 }
 
 export type EmployeeRole =

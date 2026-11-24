@@ -49,6 +49,10 @@ interface SettingsUsersModuleProps {
     keepPreviousAsAdmin: boolean;
   }) => Promise<void>;
   onMarkUserPasswordUpdated: (userId: string) => Promise<void>;
+  onSaveUserQuickPin: (
+    userId: string,
+    quickPin: string | null
+  ) => Promise<void>;
   previewRole: UserRole;
   onChangePreviewRole: (role: UserRole) => void;
 }
@@ -63,6 +67,7 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
   onDeleteStaffUser,
   onTransferPrimaryAdmin,
   onMarkUserPasswordUpdated,
+  onSaveUserQuickPin,
   previewRole,
   onChangePreviewRole,
 }) => {
@@ -78,6 +83,11 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
     null
   );
 
+  // Inline PIN visibility toggles per user row
+  const [revealedPinIds, setRevealedPinIds] = useState<Record<string, boolean>>(
+    {}
+  );
+
   // Primary Admin Transfer state
   const [showTransferForm, setShowTransferForm] = useState(false);
   const [transferEmail, setTransferEmail] = useState('');
@@ -86,14 +96,15 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
   const [transferring, setTransferring] = useState(false);
   const [transferError, setTransferError] = useState<string | null>(null);
 
-  // Per-User Password Management Modal state
-  const [passwordTarget, setPasswordTarget] = useState<StaffUserAccount | null>(
-    null
-  );
+  // Per-User Clave / Acceso Modal state
+  const [passwordTargetId, setPasswordTargetId] = useState<string | null>(null);
   const [targetNewPassword, setTargetNewPassword] = useState('');
   const [showTargetPass, setShowTargetPass] = useState(true);
   const [savingTargetPass, setSavingTargetPass] = useState(false);
   const [sendingReset, setSendingReset] = useState(false);
+  const [targetPinDraft, setTargetPinDraft] = useState('');
+  const [showTargetPin, setShowTargetPin] = useState(false);
+  const [savingPin, setSavingPin] = useState(false);
   const [targetPassError, setTargetPassError] = useState<string | null>(null);
   const [targetPassSuccess, setTargetPassSuccess] = useState<string | null>(
     null
@@ -110,6 +121,19 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
   const primaryOwnerRecord = staffUsers.find(
     (u) => u.email.trim().toLowerCase() === normalizedPrimaryEmail
   );
+  const passwordTarget = passwordTargetId
+    ? staffUsers.find((u) => u.id === passwordTargetId) || null
+    : null;
+
+  const sortedStaffUsers = [...staffUsers].sort((a, b) => {
+    const aPrimary = a.email.trim().toLowerCase() === normalizedPrimaryEmail;
+    const bPrimary = b.email.trim().toLowerCase() === normalizedPrimaryEmail;
+    if (aPrimary && !bPrimary) return -1;
+    if (!aPrimary && bPrimary) return 1;
+    if (a.role === 'admin' && b.role !== 'admin') return -1;
+    if (a.role !== 'admin' && b.role === 'admin') return 1;
+    return a.name.localeCompare(b.name);
+  });
 
   const showFlash = (msg: string) => {
     setFlash(msg);
@@ -243,11 +267,61 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
   };
 
   const openPasswordModal = (user: StaffUserAccount) => {
-    setPasswordTarget(user);
+    setPasswordTargetId(user.id);
     setTargetNewPassword('');
     setShowTargetPass(true);
+    setTargetPinDraft(user.quickPin || '');
+    setShowTargetPin(false);
     setTargetPassError(null);
     setTargetPassSuccess(null);
+  };
+
+  const handleSaveQuickPinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordTarget) return;
+    setTargetPassError(null);
+    setTargetPassSuccess(null);
+
+    const cleanPin = targetPinDraft.replace(/\D/g, '').slice(0, 4);
+    if (cleanPin.length !== 4) {
+      setTargetPassError(
+        'El PIN rápido debe tener exactamente 4 dígitos numéricos (ej: 4820).'
+      );
+      return;
+    }
+
+    setSavingPin(true);
+    try {
+      await onSaveUserQuickPin(passwordTarget.id, cleanPin);
+      setTargetPinDraft(cleanPin);
+      const msg = `PIN rápido de 4 dígitos guardado para ${passwordTarget.name}.`;
+      setTargetPassSuccess(msg);
+      showFlash(msg);
+    } catch {
+      setTargetPassError(
+        'No se pudo guardar el PIN en Firestore. Intenta de nuevo.'
+      );
+    } finally {
+      setSavingPin(false);
+    }
+  };
+
+  const handleClearQuickPin = async () => {
+    if (!passwordTarget) return;
+    setTargetPassError(null);
+    setTargetPassSuccess(null);
+    setSavingPin(true);
+    try {
+      await onSaveUserQuickPin(passwordTarget.id, null);
+      setTargetPinDraft('');
+      const msg = `PIN rápido eliminado para ${passwordTarget.name}.`;
+      setTargetPassSuccess(msg);
+      showFlash(msg);
+    } catch {
+      setTargetPassError('No se pudo eliminar el PIN.');
+    } finally {
+      setSavingPin(false);
+    }
   };
 
   const handleSaveTargetPassword = async (e: React.FormEvent) => {
@@ -362,7 +436,7 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#0F172A] text-[#FBBF24] text-xs font-bold">
           <Crown className="w-3.5 h-3.5" />
-          Administrador Total / Dueño
+          Administrador (Total) · (Dueño Principal)
         </span>
       );
     }
@@ -370,7 +444,7 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-[#1D4ED8] text-xs font-bold">
           <ShieldCheck className="w-3.5 h-3.5" />
-          Administrador
+          Administrador (Secundario)
         </span>
       );
     }
@@ -524,7 +598,7 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
           </div>
           <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 border border-white/15 text-xs font-bold text-[#FBBF24] shrink-0">
             <Crown className="w-3.5 h-3.5" />
-            Administrador Total / Dueño
+            Dueño Principal Protegido
           </span>
         </div>
 
@@ -533,7 +607,7 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div className="space-y-1">
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                Administrador Total Actual (Dueño de la App)
+                Dueño Principal Actual (Titular Protegido)
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-display font-bold text-lg text-[#0F172A]">
@@ -801,16 +875,17 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
           </div>
 
           <div className="divide-y divide-slate-200">
-            {staffUsers.length === 0 ? (
+            {sortedStaffUsers.length === 0 ? (
               <div className="p-8 text-center text-sm text-slate-500">
                 Aún no hay usuarios registrados adicionalmente.
               </div>
             ) : (
-              staffUsers.map((u) => {
+              sortedStaffUsers.map((u) => {
                 const isPrimaryOwner =
                   u.email.trim().toLowerCase() === normalizedPrimaryEmail;
                 const isSelf =
                   u.email.trim().toLowerCase() === normalizedCurrentEmail;
+                const isPinRevealed = Boolean(revealedPinIds[u.id]);
                 return (
                   <div
                     key={u.id}
@@ -834,26 +909,51 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
                         {u.email}
                         {isSelf && ' · (Tu sesión)'}
                       </div>
-                      {u.passwordUpdatedAt && (
-                        <div className="text-[11px] text-slate-500 tabular-nums">
-                          Última gestión de clave:{' '}
-                          {formatDateSpanish(u.passwordUpdatedAt.slice(0, 10))}{' '}
-                          {formatTime(u.passwordUpdatedAt)}
-                        </div>
-                      )}
+
+                      <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                        {u.quickPin ? (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[11px] font-bold text-[#0F172A] tabular-nums">
+                            <span>
+                              PIN rápido:{' '}
+                              {isPinRevealed ? u.quickPin : '••••'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRevealedPinIds((prev) => ({
+                                  ...prev,
+                                  [u.id]: !prev[u.id],
+                                }))
+                              }
+                              aria-label={
+                                isPinRevealed ? 'Ocultar PIN' : 'Mostrar PIN'
+                              }
+                              className="text-slate-500 hover:text-[#1D4ED8] transition-colors"
+                            >
+                              {isPinRevealed ? (
+                                <EyeOff className="w-3.5 h-3.5" />
+                              ) : (
+                                <Eye className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-400">
+                            Sin PIN rápido asignado
+                          </span>
+                        )}
+
+                        {u.passwordUpdatedAt && (
+                          <span className="text-[11px] text-slate-500 tabular-nums">
+                            · Clave gestionada:{' '}
+                            {formatDateSpanish(u.passwordUpdatedAt.slice(0, 10))}{' '}
+                            {formatTime(u.passwordUpdatedAt)}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => openPasswordModal(u)}
-                        title="Gestionar o cambiar contraseña"
-                        className="min-h-[38px] px-3 py-1 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#1D4ED8] text-xs font-bold flex items-center gap-1.5 transition-colors"
-                      >
-                        <KeyRound className="w-3.5 h-3.5" />
-                        Contraseña
-                      </button>
-
                       <select
                         disabled={isPrimaryOwner}
                         value={u.role}
@@ -866,8 +966,22 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
                         <option value="caja">Caja / Operador</option>
                         <option value="taquilla">Taquilla</option>
                         <option value="mesero">Mesero</option>
-                        <option value="admin">Administrador</option>
+                        <option value="admin">
+                          {isPrimaryOwner
+                            ? 'Administrador (Total)'
+                            : 'Administrador'}
+                        </option>
                       </select>
+
+                      <button
+                        type="button"
+                        onClick={() => openPasswordModal(u)}
+                        title="Enviar enlace de clave o gestionar PIN rápido de 4 dígitos"
+                        className="min-h-[38px] px-3 py-1 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#1D4ED8] text-xs font-bold flex items-center gap-1.5 transition-colors"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                        Clave / Acceso
+                      </button>
 
                       {!isPrimaryOwner && (
                         <>
@@ -969,16 +1083,16 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
         </div>
       </form>
 
-      {/* Per-User Password Management Modal */}
+      {/* Per-User Clave / Acceso Modal (Password Reset Link + 4-Digit Quick PIN) */}
       {passwordTarget && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-2xl border border-[#CBD5E1] shadow-2xl overflow-hidden">
+          <div className="bg-white w-full max-w-lg rounded-2xl border border-[#CBD5E1] shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
             <div className="px-5 py-4 bg-[#0F172A] text-white flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
+              <div className="flex items-center gap-2.5 min-w-0">
                 <KeyRound className="w-5 h-5 text-[#FBBF24] shrink-0" />
                 <div className="min-w-0">
                   <h3 className="font-display font-bold text-base truncate">
-                    Contraseña · {passwordTarget.name}
+                    Clave / Acceso · {passwordTarget.name}
                   </h3>
                   <p className="text-[11px] text-slate-300 tabular-nums truncate">
                     {passwordTarget.email}
@@ -987,27 +1101,15 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setPasswordTarget(null)}
+                onClick={() => setPasswordTargetId(null)}
+                aria-label="Cerrar ventana"
                 className="text-slate-300 hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-5 space-y-4">
-              {passwordTarget.email.trim().toLowerCase() !==
-                normalizedCurrentEmail && (
-                <div className="p-3 rounded-xl bg-slate-50 border border-[#CBD5E1] text-xs text-slate-700 leading-relaxed">
-                  <strong>Protección de contraseñas:</strong> Firebase cifra las
-                  contraseñas y no permite leer claves anteriores en texto
-                  plano. Desde aquí puedes{' '}
-                  <strong>asignar una clave inicial visible</strong> (para
-                  cuentas nuevas) o{' '}
-                  <strong>enviar un enlace inmediato de cambio</strong> al
-                  correo del usuario.
-                </div>
-              )}
-
+            <div className="p-5 space-y-4 overflow-y-auto">
               {targetPassError && (
                 <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs font-semibold text-red-700">
                   {targetPassError}
@@ -1020,79 +1122,181 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
                 </div>
               )}
 
-              <form onSubmit={handleSaveTargetPassword} className="space-y-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    {passwordTarget.email.trim().toLowerCase() ===
-                    normalizedCurrentEmail
-                      ? 'Nueva Contraseña para Tu Cuenta'
-                      : 'Asignar Clave Inicial (Visible antes de guardar)'}
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                      <input
-                        type={showTargetPass ? 'text' : 'password'}
-                        value={targetNewPassword}
-                        onChange={(e) => setTargetNewPassword(e.target.value)}
-                        placeholder="Mínimo 6 caracteres..."
-                        className="w-full min-h-[44px] pl-3.5 pr-10 py-2 border border-[#CBD5E1] rounded-xl text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowTargetPass((v) => !v)}
-                        aria-label="Mostrar u ocultar clave"
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
-                      >
-                        {showTargetPass ? (
-                          <EyeOff className="w-4 h-4" />
-                        ) : (
-                          <Eye className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                    {targetNewPassword && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          void navigator.clipboard?.writeText(targetNewPassword);
-                          showFlash('Clave copiada al portapapeles.');
-                        }}
-                        title="Copiar clave"
-                        className="min-h-[44px] px-3 rounded-xl border border-[#CBD5E1] bg-slate-50 hover:bg-slate-100 text-slate-700"
-                      >
-                        <Copy className="w-4 h-4" />
-                      </button>
-                    )}
+              {/* Option 1: Official Firebase Auth Reset Link */}
+              <div className="p-4 rounded-xl bg-blue-50/70 border border-blue-200 space-y-2.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-[#1D4ED8]">
+                  <Mail className="w-4 h-4 shrink-0" />
+                  <span>1. Enlace oficial para crear o cambiar clave (Gmail)</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Envía el enlace oficial de Firebase Auth a{' '}
+                  <strong className="tabular-nums text-[#0F172A]">
+                    {passwordTarget.email}
+                  </strong>{' '}
+                  para que el usuario elija o actualice su propia contraseña en
+                  1 clic.
+                </p>
+                <button
+                  type="button"
+                  disabled={sendingReset}
+                  onClick={() => handleSendResetEmail(passwordTarget)}
+                  className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-[#1D4ED8] hover:bg-blue-800 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                >
+                  <Mail className="w-4 h-4" />
+                  {sendingReset
+                    ? 'Enviando enlace...'
+                    : 'Enviar enlace para crear/cambiar clave'}
+                </button>
+              </div>
+
+              {/* Option 2: 4-Digit Quick POS/System PIN */}
+              <form
+                onSubmit={handleSaveQuickPinSubmit}
+                className="p-4 rounded-xl bg-[#F8FAFC] border border-[#CBD5E1] space-y-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-[#0F172A]">
+                    <Lock className="w-4 h-4 text-[#10B981] shrink-0" />
+                    <span>2. PIN rápido de caja / sistema (4 dígitos)</span>
                   </div>
+                  {passwordTarget.quickPin && (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-[10px] font-bold text-[#065F46]">
+                      PIN activo
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Asigna, consulta o edita un PIN numérico de 4 dígitos guardado
+                  en el perfil del usuario en Firestore como respaldo rápido.
+                </p>
+
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type={showTargetPin ? 'text' : 'password'}
+                      inputMode="numeric"
+                      maxLength={4}
+                      value={targetPinDraft}
+                      onChange={(e) =>
+                        setTargetPinDraft(
+                          e.target.value.replace(/\D/g, '').slice(0, 4)
+                        )
+                      }
+                      placeholder="4 dígitos (ej: 4820)"
+                      className="w-full min-h-[44px] pl-3.5 pr-10 py-2 bg-white border border-[#CBD5E1] rounded-xl text-base font-bold tracking-[0.35em] tabular-nums"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowTargetPin((v) => !v)}
+                      aria-label={showTargetPin ? 'Ocultar PIN' : 'Mostrar PIN'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                    >
+                      {showTargetPin ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+
+                  {targetPinDraft.length === 4 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(targetPinDraft);
+                        showFlash('PIN copiado al portapapeles.');
+                      }}
+                      title="Copiar PIN"
+                      className="min-h-[44px] px-3 rounded-xl border border-[#CBD5E1] bg-white hover:bg-slate-100 text-slate-700"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={savingPin || targetPinDraft.length !== 4}
+                    className="flex-1 min-h-[42px] px-4 py-2 rounded-xl bg-[#10B981] hover:bg-[#059669] disabled:opacity-50 text-white text-xs font-bold transition-colors"
+                  >
+                    {savingPin ? 'Guardando PIN...' : 'Guardar PIN de 4 dígitos'}
+                  </button>
+                  {passwordTarget.quickPin && (
+                    <button
+                      type="button"
+                      disabled={savingPin}
+                      onClick={handleClearQuickPin}
+                      className="min-h-[42px] px-3.5 py-2 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold transition-colors"
+                    >
+                      Quitar PIN
+                    </button>
+                  )}
+                </div>
+              </form>
+
+              {/* Direct Password Change (for Self or Brand-New Provisioned Account) */}
+              <form
+                onSubmit={handleSaveTargetPassword}
+                className="p-4 rounded-xl bg-white border border-slate-200 space-y-2.5"
+              >
+                <label className="block text-xs font-bold text-slate-700">
+                  {passwordTarget.email.trim().toLowerCase() ===
+                  normalizedCurrentEmail
+                    ? 'Cambiar Mi Contraseña Directamente'
+                    : 'Asignar Clave Inicial (Solo cuentas nuevas sin clave aún)'}
+                </label>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type={showTargetPass ? 'text' : 'password'}
+                      value={targetNewPassword}
+                      onChange={(e) => setTargetNewPassword(e.target.value)}
+                      placeholder="Mínimo 6 caracteres..."
+                      className="w-full min-h-[42px] pl-3.5 pr-10 py-2 border border-[#CBD5E1] rounded-xl text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowTargetPass((v) => !v)}
+                      aria-label="Mostrar u ocultar clave"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                    >
+                      {showTargetPass ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                  {targetNewPassword && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(targetNewPassword);
+                        showFlash('Clave copiada al portapapeles.');
+                      }}
+                      title="Copiar clave"
+                      className="min-h-[42px] px-3 rounded-xl border border-[#CBD5E1] bg-slate-50 hover:bg-slate-100 text-slate-700"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
 
                 <button
                   type="submit"
                   disabled={savingTargetPass || targetNewPassword.length < 6}
-                  className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-[#1D4ED8] hover:bg-blue-800 disabled:opacity-50 text-white text-xs font-bold transition-colors"
+                  className="w-full min-h-[40px] px-4 py-2 rounded-xl bg-[#0F172A] hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold transition-colors"
                 >
                   {savingTargetPass
                     ? 'Aplicando...'
                     : passwordTarget.email.trim().toLowerCase() ===
                         normalizedCurrentEmail
-                      ? 'Cambiar Mi Contraseña Ahora'
-                      : 'Guardar Clave Inicial / Activar Acceso'}
+                      ? 'Actualizar Mi Contraseña'
+                      : 'Crear Clave Inicial'}
                 </button>
               </form>
-
-              <div className="pt-3 border-t border-slate-200 space-y-2">
-                <button
-                  type="button"
-                  disabled={sendingReset}
-                  onClick={() => handleSendResetEmail(passwordTarget)}
-                  className="w-full min-h-[44px] px-4 py-2 rounded-xl border border-[#CBD5E1] bg-slate-50 hover:bg-slate-100 text-[#0F172A] text-xs font-bold flex items-center justify-center gap-2 transition-colors"
-                >
-                  <Mail className="w-4 h-4 text-[#1D4ED8]" />
-                  {sendingReset
-                    ? 'Enviando enlace...'
-                    : 'Enviar Enlace de Cambio de Contraseña por Correo'}
-                </button>
-              </div>
             </div>
           </div>
         </div>
