@@ -77,6 +77,9 @@ function MainApp() {
   const [exchangeBufferBs, setExchangeBufferBs] = useState<number>(25.0);
   const [allowEmployeeProductEdit, setAllowEmployeeProductEdit] =
     useState<boolean>(false);
+  const [primaryAdminEmail, setPrimaryAdminEmail] = useState<string>(
+    BOOTSTRAP_ADMIN_EMAIL
+  );
   const [staffEmails, setStaffEmails] = useState<string[]>([
     BOOTSTRAP_ADMIN_EMAIL,
   ]);
@@ -133,7 +136,7 @@ function MainApp() {
     void refreshBcv();
   }, [refreshBcv]);
 
-  // --- Seed Initial Dataset on First Admin Login ---
+  // --- Seed Initial Dataset or Auto-Migrate Ownership on First Admin Login ---
   const ensureBootstrappedDatabase = useCallback(
     async (adminUser: User) => {
       const adminEmail = (adminUser.email || BOOTSTRAP_ADMIN_EMAIL)
@@ -142,7 +145,120 @@ function MainApp() {
       const configRef = doc(db, 'appConfig', 'main');
       const configSnap = await getDoc(configRef);
 
-      if (configSnap.exists()) return;
+      if (configSnap.exists()) {
+        const cfg = configSnap.data();
+        const existingStaffEmails: string[] = Array.isArray(cfg.staffEmails)
+          ? cfg.staffEmails.map((e: string) => String(e).trim().toLowerCase())
+          : [];
+        const existingAdminEmails: string[] = Array.isArray(cfg.adminEmails)
+          ? cfg.adminEmails.map((e: string) => String(e).trim().toLowerCase())
+          : [];
+        const existingPrimary =
+          typeof cfg.primaryAdminEmail === 'string' &&
+          cfg.primaryAdminEmail.includes('@')
+            ? cfg.primaryAdminEmail.trim().toLowerCase()
+            : null;
+
+        const bootstrapDocId = emailToDocId(adminEmail);
+        const bootstrapStaffRef = doc(db, 'staffUsers', bootstrapDocId);
+        const bootstrapStaffSnap = await getDoc(bootstrapStaffRef);
+
+        const needsOwnershipSync =
+          !existingPrimary ||
+          !existingAdminEmails.includes(adminEmail) ||
+          !existingStaffEmails.includes(adminEmail) ||
+          !bootstrapStaffSnap.exists();
+
+        if (!needsOwnershipSync) return;
+
+        const targetPrimary = existingPrimary || adminEmail;
+        const nextStaffEmails = Array.from(
+          new Set([adminEmail, targetPrimary, ...existingStaffEmails])
+        ).slice(0, 30);
+        const nextAdminEmails = Array.from(
+          new Set([adminEmail, targetPrimary, ...existingAdminEmails])
+        ).slice(0, 10);
+
+        await updateDoc(configRef, {
+          primaryAdminEmail: targetPrimary,
+          staffEmails: nextStaffEmails,
+          adminEmails: nextAdminEmails,
+          updatedAt: serverTimestamp(),
+        });
+
+        if (!bootstrapStaffSnap.exists()) {
+          await setDoc(bootstrapStaffRef, {
+            id: bootstrapDocId,
+            name: (adminUser.displayName || 'Yohelly Bracho').slice(0, 80),
+            email: adminEmail,
+            role: 'admin',
+            active: true,
+            adminEmails: nextAdminEmails,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          await updateDoc(bootstrapStaffRef, {
+            role: 'admin',
+            active: true,
+            adminEmails: nextAdminEmails,
+            updatedAt: serverTimestamp(),
+          });
+        }
+
+        const staffCols = [
+          'products',
+          'events',
+          'sales',
+          'tableOrders',
+          'courtesies',
+          'closedShifts',
+        ];
+        const adminCols = ['staffUsers', 'payroll', 'restocks'];
+        const pendingUpdates: Array<{
+          ref: ReturnType<typeof doc>;
+          payload: Record<string, unknown>;
+        }> = [];
+
+        for (const col of staffCols) {
+          const snap = await getDocs(collection(db, col));
+          snap.docs.forEach((d) => {
+            const payload: Record<string, unknown> = {
+              staffEmails: nextStaffEmails,
+            };
+            if (
+              col === 'products' ||
+              col === 'events' ||
+              col === 'sales' ||
+              col === 'tableOrders'
+            ) {
+              payload.updatedAt = serverTimestamp();
+            }
+            pendingUpdates.push({ ref: d.ref, payload });
+          });
+        }
+
+        for (const col of adminCols) {
+          const snap = await getDocs(collection(db, col));
+          snap.docs.forEach((d) => {
+            const payload: Record<string, unknown> = {
+              adminEmails: nextAdminEmails,
+            };
+            if (col === 'staffUsers') {
+              payload.updatedAt = serverTimestamp();
+            }
+            pendingUpdates.push({ ref: d.ref, payload });
+          });
+        }
+
+        for (let i = 0; i < pendingUpdates.length; i += 400) {
+          const chunk = pendingUpdates.slice(i, i + 400);
+          const batch = writeBatch(db);
+          chunk.forEach((u) => batch.update(u.ref, u.payload));
+          await batch.commit();
+        }
+        return;
+      }
 
       const seed = buildInitialData();
       const initialStaffEmails = [adminEmail];
@@ -152,6 +268,7 @@ function MainApp() {
       batch.set(configRef, {
         exchangeBufferBs: seed.exchangeBufferBs,
         allowEmployeeProductEdit: false,
+        primaryAdminEmail: adminEmail,
         staffEmails: initialStaffEmails,
         adminEmails: initialAdminEmails,
         updatedAt: serverTimestamp(),
@@ -160,7 +277,7 @@ function MainApp() {
       const bootstrapDocId = emailToDocId(adminEmail);
       batch.set(doc(db, 'staffUsers', bootstrapDocId), {
         id: bootstrapDocId,
-        name: (adminUser.displayName || 'Dueño Principal').slice(0, 80),
+        name: (adminUser.displayName || 'Yohelly Bracho').slice(0, 80),
         email: adminEmail,
         role: 'admin',
         active: true,
@@ -307,7 +424,7 @@ function MainApp() {
         } else if (emailLower === BOOTSTRAP_ADMIN_EMAIL) {
           setAuthorizedAccount({
             id: staffId,
-            name: user.displayName || 'Dueño Principal',
+            name: user.displayName || 'Yohelly Bracho',
             email: emailLower,
             role: 'admin',
             active: true,
@@ -374,6 +491,14 @@ function MainApp() {
               setExchangeBufferBs(d.exchangeBufferBs);
             }
             setAllowEmployeeProductEdit(Boolean(d.allowEmployeeProductEdit));
+            if (
+              typeof d.primaryAdminEmail === 'string' &&
+              d.primaryAdminEmail.includes('@')
+            ) {
+              setPrimaryAdminEmail(d.primaryAdminEmail.trim().toLowerCase());
+            } else {
+              setPrimaryAdminEmail(BOOTSTRAP_ADMIN_EMAIL);
+            }
             if (Array.isArray(d.staffEmails) && d.staffEmails.length > 0) {
               setStaffEmails(d.staffEmails);
             }
@@ -582,26 +707,37 @@ function MainApp() {
 
   // --- Admin Config & Staff Sync ---
   const syncEmailListsAcrossFirestore = async (
-    nextStaffList: StaffUserAccount[]
+    nextStaffList: StaffUserAccount[],
+    overridePrimaryAdminEmail?: string
   ) => {
+    const effectivePrimary = (
+      overridePrimaryAdminEmail ||
+      primaryAdminEmail ||
+      BOOTSTRAP_ADMIN_EMAIL
+    )
+      .trim()
+      .toLowerCase();
+
     const nextStaffEmails = Array.from(
       new Set([
-        BOOTSTRAP_ADMIN_EMAIL,
+        effectivePrimary,
         ...nextStaffList
           .filter((u) => u.active)
           .map((u) => u.email.trim().toLowerCase()),
       ])
-    );
+    ).slice(0, 30);
+
     const nextAdminEmails = Array.from(
       new Set([
-        BOOTSTRAP_ADMIN_EMAIL,
+        effectivePrimary,
         ...nextStaffList
           .filter((u) => u.active && u.role === 'admin')
           .map((u) => u.email.trim().toLowerCase()),
       ])
-    );
+    ).slice(0, 10);
 
     await updateDoc(doc(db, 'appConfig', 'main'), {
+      primaryAdminEmail: effectivePrimary,
       staffEmails: nextStaffEmails,
       adminEmails: nextAdminEmails,
       updatedAt: serverTimestamp(),
@@ -617,7 +753,11 @@ function MainApp() {
     ];
     const adminCollections = ['staffUsers', 'payroll', 'restocks'];
 
-    const batch = writeBatch(db);
+    const pendingUpdates: Array<{
+      ref: ReturnType<typeof doc>;
+      payload: Record<string, unknown>;
+    }> = [];
+
     for (const col of staffCollections) {
       const snap = await getDocs(
         query(
@@ -637,7 +777,7 @@ function MainApp() {
         ) {
           updatePayload.updatedAt = serverTimestamp();
         }
-        batch.update(d.ref, updatePayload);
+        pendingUpdates.push({ ref: d.ref, payload: updatePayload });
       });
     }
 
@@ -655,11 +795,16 @@ function MainApp() {
         if (col === 'staffUsers') {
           updatePayload.updatedAt = serverTimestamp();
         }
-        batch.update(d.ref, updatePayload);
+        pendingUpdates.push({ ref: d.ref, payload: updatePayload });
       });
     }
 
-    await batch.commit();
+    for (let i = 0; i < pendingUpdates.length; i += 400) {
+      const chunk = pendingUpdates.slice(i, i + 400);
+      const batch = writeBatch(db);
+      chunk.forEach((item) => batch.update(item.ref, item.payload));
+      await batch.commit();
+    }
   };
 
   const handleSaveStaffUser = async (params: {
@@ -670,6 +815,7 @@ function MainApp() {
   }) => {
     if (actualRole !== 'admin') return;
     const cleanEmail = params.email.trim().toLowerCase();
+    const isPrimary = cleanEmail === primaryAdminEmail.toLowerCase();
     const docId = emailToDocId(cleanEmail);
     const ref = doc(db, 'staffUsers', docId);
     const existing = staffUsers.find((u) => u.id === docId);
@@ -679,8 +825,8 @@ function MainApp() {
         await updateDoc(ref, {
           name: params.name.trim(),
           email: cleanEmail,
-          role: cleanEmail === BOOTSTRAP_ADMIN_EMAIL ? 'admin' : params.role,
-          active: cleanEmail === BOOTSTRAP_ADMIN_EMAIL ? true : params.active,
+          role: isPrimary ? 'admin' : params.role,
+          active: isPrimary ? true : params.active,
           adminEmails,
           updatedAt: serverTimestamp(),
         });
@@ -689,8 +835,8 @@ function MainApp() {
           id: docId,
           name: params.name.trim(),
           email: cleanEmail,
-          role: cleanEmail === BOOTSTRAP_ADMIN_EMAIL ? 'admin' : params.role,
-          active: cleanEmail === BOOTSTRAP_ADMIN_EMAIL ? true : params.active,
+          role: isPrimary ? 'admin' : params.role,
+          active: isPrimary ? true : params.active,
           adminEmails,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -701,15 +847,12 @@ function MainApp() {
         ? staffUsers.map((u) =>
             u.id === docId
               ? {
+                  ...u,
                   id: docId,
                   name: params.name.trim(),
                   email: cleanEmail,
-                  role:
-                    cleanEmail === BOOTSTRAP_ADMIN_EMAIL
-                      ? 'admin'
-                      : params.role,
-                  active:
-                    cleanEmail === BOOTSTRAP_ADMIN_EMAIL ? true : params.active,
+                  role: isPrimary ? 'admin' : params.role,
+                  active: isPrimary ? true : params.active,
                 }
               : u
           )
@@ -719,10 +862,8 @@ function MainApp() {
               id: docId,
               name: params.name.trim(),
               email: cleanEmail,
-              role:
-                cleanEmail === BOOTSTRAP_ADMIN_EMAIL ? 'admin' : params.role,
-              active:
-                cleanEmail === BOOTSTRAP_ADMIN_EMAIL ? true : params.active,
+              role: isPrimary ? 'admin' : params.role,
+              active: isPrimary ? true : params.active,
             },
           ];
 
@@ -736,7 +877,9 @@ function MainApp() {
   const handleDeleteStaffUser = async (userId: string) => {
     if (actualRole !== 'admin') return;
     const target = staffUsers.find((u) => u.id === userId);
-    if (!target || target.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL) return;
+    if (!target || target.email.toLowerCase() === primaryAdminEmail.toLowerCase()) {
+      return;
+    }
 
     try {
       await deleteDoc(doc(db, 'staffUsers', userId));
@@ -744,6 +887,108 @@ function MainApp() {
       await syncEmailListsAcrossFirestore(nextList);
     } catch (err) {
       reportError(err, OperationType.DELETE, `staffUsers/${userId}`);
+    }
+  };
+
+  const handleTransferPrimaryAdmin = async (params: {
+    newEmail: string;
+    newName: string;
+    keepPreviousAsAdmin: boolean;
+  }) => {
+    if (actualRole !== 'admin') return;
+    const cleanNewEmail = params.newEmail.trim().toLowerCase();
+    const cleanNewName = params.newName.trim().slice(0, 80);
+    if (!cleanNewEmail || !cleanNewEmail.includes('@') || !cleanNewName) return;
+
+    const newDocId = emailToDocId(cleanNewEmail);
+    const existingNew = staffUsers.find((u) => u.id === newDocId);
+    const prevPrimaryEmail = primaryAdminEmail.toLowerCase();
+    const prevDocId = emailToDocId(prevPrimaryEmail);
+
+    const nextAdminEmailsPreview = Array.from(
+      new Set([
+        cleanNewEmail,
+        ...adminEmails,
+      ])
+    ).slice(0, 10);
+
+    try {
+      if (existingNew) {
+        await updateDoc(doc(db, 'staffUsers', newDocId), {
+          name: cleanNewName,
+          email: cleanNewEmail,
+          role: 'admin',
+          active: true,
+          adminEmails: nextAdminEmailsPreview,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(doc(db, 'staffUsers', newDocId), {
+          id: newDocId,
+          name: cleanNewName,
+          email: cleanNewEmail,
+          role: 'admin',
+          active: true,
+          adminEmails: nextAdminEmailsPreview,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      let nextList: StaffUserAccount[] = existingNew
+        ? staffUsers.map((u) =>
+            u.id === newDocId
+              ? {
+                  ...u,
+                  name: cleanNewName,
+                  email: cleanNewEmail,
+                  role: 'admin',
+                  active: true,
+                }
+              : u
+          )
+        : [
+            ...staffUsers,
+            {
+              id: newDocId,
+              name: cleanNewName,
+              email: cleanNewEmail,
+              role: 'admin',
+              active: true,
+            },
+          ];
+
+      if (
+        !params.keepPreviousAsAdmin &&
+        prevPrimaryEmail !== cleanNewEmail &&
+        prevPrimaryEmail !== userEmail.toLowerCase()
+      ) {
+        const prevDocExists = staffUsers.some((u) => u.id === prevDocId);
+        if (prevDocExists) {
+          await deleteDoc(doc(db, 'staffUsers', prevDocId));
+          nextList = nextList.filter((u) => u.id !== prevDocId);
+        }
+      }
+
+      await syncEmailListsAcrossFirestore(nextList, cleanNewEmail);
+      setPrimaryAdminEmail(cleanNewEmail);
+    } catch (err) {
+      reportError(err, OperationType.WRITE, 'appConfig/main');
+      throw err;
+    }
+  };
+
+  const handleMarkUserPasswordUpdated = async (userId: string) => {
+    if (actualRole !== 'admin') return;
+    const exists = staffUsers.some((u) => u.id === userId);
+    if (!exists) return;
+    try {
+      await updateDoc(doc(db, 'staffUsers', userId), {
+        passwordUpdatedAt: new Date().toISOString(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch {
+      // Non-critical timestamp metadata update
     }
   };
 
@@ -1538,6 +1783,10 @@ function MainApp() {
       <SidebarAndNav
         actualRole={actualRole}
         effectiveRole={effectiveRole}
+        isPrimaryAdmin={
+          authorizedAccount.email.toLowerCase() ===
+          primaryAdminEmail.toLowerCase()
+        }
         userName={authorizedAccount.name}
         userEmail={authorizedAccount.email}
         onPreviewRoleChange={handlePreviewRoleChange}
@@ -1624,11 +1873,14 @@ function MainApp() {
           {activeSection === 'configuracion' && effectiveRole === 'admin' && (
             <SettingsUsersModule
               currentUserEmail={authorizedAccount.email}
+              primaryAdminEmail={primaryAdminEmail}
               staffUsers={staffUsers}
               allowEmployeeProductEdit={allowEmployeeProductEdit}
               onToggleAllowEmployeeEdit={handleToggleAllowEmployeeEdit}
               onSaveStaffUser={handleSaveStaffUser}
               onDeleteStaffUser={handleDeleteStaffUser}
+              onTransferPrimaryAdmin={handleTransferPrimaryAdmin}
+              onMarkUserPasswordUpdated={handleMarkUserPasswordUpdated}
               previewRole={previewRole}
               onChangePreviewRole={handlePreviewRoleChange}
             />

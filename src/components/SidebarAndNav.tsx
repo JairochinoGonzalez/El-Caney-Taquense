@@ -19,6 +19,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 interface SidebarAndNavProps {
   actualRole: UserRole;
   effectiveRole: UserRole;
+  isPrimaryAdmin?: boolean;
   userName: string;
   userEmail: string;
   onPreviewRoleChange: (role: UserRole) => void;
@@ -33,6 +34,7 @@ interface SidebarAndNavProps {
 export const SidebarAndNav: React.FC<SidebarAndNavProps> = ({
   actualRole,
   effectiveRole,
+  isPrimaryAdmin = false,
   userName,
   userEmail,
   onPreviewRoleChange,
@@ -120,7 +122,9 @@ export const SidebarAndNav: React.FC<SidebarAndNavProps> = ({
 
   const roleDisplayName =
     effectiveRole === 'admin'
-      ? 'Administrador'
+      ? isPrimaryAdmin
+        ? 'Administrador Total / Dueño'
+        : 'Administrador'
       : effectiveRole === 'taquilla'
         ? 'Taquilla'
         : effectiveRole === 'mesero'
@@ -231,6 +235,13 @@ export const SidebarAndNav: React.FC<SidebarAndNavProps> = ({
             <div className="min-w-0">
               <div className="text-xs font-bold text-[#0F172A] truncate">
                 {userName}
+              </div>
+              <div className="text-[11px] font-semibold text-[#1D4ED8] truncate">
+                {actualRole === 'admin'
+                  ? isPrimaryAdmin
+                    ? 'Administrador Total / Dueño'
+                    : 'Administrador'
+                  : roleDisplayName}
               </div>
               <div className="text-[11px] tabular-nums text-slate-500 truncate">
                 {userEmail}

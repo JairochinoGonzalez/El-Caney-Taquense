@@ -39,7 +39,7 @@ service cloud.firestore {
     }
 
     function isBootstrappedAdmin() {
-      return isVerifiedUser() && userEmailLower() == 'sk8jairo3@gmail.com';
+      return isVerifiedUser() && userEmailLower() == 'yohelly.bracho@gmail.com';
     }
 
     function hasStaffDoc() {
@@ -106,9 +106,10 @@ service cloud.firestore {
     // --- Validation Blueprints (Anti-Update-Gap) ---
     function isValidAppConfig(data) {
       return data.keys().hasAll(['exchangeBufferBs', 'allowEmployeeProductEdit', 'staffEmails', 'adminEmails', 'updatedAt'])
-        && data.keys().hasOnly(['exchangeBufferBs', 'allowEmployeeProductEdit', 'staffEmails', 'adminEmails', 'updatedAt'])
+        && data.keys().hasOnly(['exchangeBufferBs', 'allowEmployeeProductEdit', 'primaryAdminEmail', 'staffEmails', 'adminEmails', 'updatedAt'])
         && data.exchangeBufferBs is number && data.exchangeBufferBs >= 0 && data.exchangeBufferBs <= 100000
         && data.allowEmployeeProductEdit is bool
+        && (!('primaryAdminEmail' in data) || (data.primaryAdminEmail is string && data.primaryAdminEmail.size() >= 3 && data.primaryAdminEmail.size() <= 120))
         && isValidEmailList(data.staffEmails, 30)
         && isValidEmailList(data.adminEmails, 10)
         && data.updatedAt is timestamp;
@@ -116,13 +117,14 @@ service cloud.firestore {
 
     function isValidStaffUser(data) {
       return data.keys().hasAll(['id', 'name', 'email', 'role', 'active', 'adminEmails', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'name', 'email', 'role', 'active', 'adminEmails', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'email', 'role', 'active', 'adminEmails', 'passwordUpdatedAt', 'createdAt', 'updatedAt'])
         && isValidId(data.id)
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
         && data.role in ['admin', 'taquilla', 'caja', 'mesero']
         && data.active is bool
         && isValidEmailList(data.adminEmails, 10)
+        && (!('passwordUpdatedAt' in data) || (data.passwordUpdatedAt is string && data.passwordUpdatedAt.size() <= 40))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }

@@ -13,6 +13,7 @@ export interface StaffUserAccount {
   email: string;
   role: UserRole;
   active: boolean;
+  passwordUpdatedAt?: string;
 }
 
 export type ProductCategory = 'cervezas' | 'licores' | 'refrescos' | 'hielo_otros';

@@ -7,6 +7,7 @@ import {
   linkWithCredential,
   reauthenticateWithPopup,
   sendEmailVerification,
+  sendPasswordResetEmail,
   signOut,
   updatePassword,
 } from 'firebase/auth';
@@ -17,7 +18,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
-export const BOOTSTRAP_ADMIN_EMAIL = 'sk8jairo3@gmail.com';
+export const BOOTSTRAP_ADMIN_EMAIL = 'yohelly.bracho@gmail.com';
 
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -85,6 +86,14 @@ export async function createEmailPasswordAuthUser(
   } finally {
     await signOut(secondaryAuth).catch(() => {});
   }
+}
+
+export async function sendUserPasswordReset(email: string): Promise<void> {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    throw new Error('Correo electrónico inválido.');
+  }
+  await sendPasswordResetEmail(auth, cleanEmail);
 }
 
 export enum OperationType {

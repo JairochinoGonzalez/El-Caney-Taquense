@@ -1,7 +1,7 @@
 # Security Specification — El Caney Taquense
 
 ## 1. Data Invariants
-- Bootstrapped Admin (`sk8jairo3@gmail.com`, verified email) and active `admin` accounts in `staffUsers` are the only users allowed to create/modify/delete `staffUsers`, `payroll`, `appConfig`, delete `products`, delete `sales`, or edit locked product costs/prices.
+- Bootstrapped Admin (`yohelly.bracho@gmail.com`, verified email) and active `admin` accounts in `staffUsers` are the only users allowed to create/modify/delete `staffUsers`, `payroll`, `appConfig`, delete `products`, delete `sales`, or edit locked product costs/prices.
 - A `taquilla` user can ONLY create/suspend `sales` with `kind == 'taquilla'`, can read/create/restock `products`, can read/create/update `events`, and can create/read `closedShifts`. They CANNOT read/write `payroll` or `appConfig` writes, and CANNOT create `sales` with `kind == 'barra'` or `courtesies`.
 - A `caja` user can ONLY create/suspend `sales` with `kind == 'barra'` and `courtesies`, can read/create/restock `products`, can read/create/update `events`, and can create/read `closedShifts`. They CANNOT read/write `payroll` or `appConfig` writes, and CANNOT create `sales` with `kind == 'taquilla'`.
 - PII (`staffUsers` emails) can only be read by `isAdmin()` or by the matching verified user (`resource.data.email == request.auth.token.email.lower()`).
@@ -10,7 +10,7 @@
 
 ## 2. Adversarial Test Payloads ("Dirty Dozen")
 1. Unauthenticated read on `products` -> PERMISSION_DENIED
-2. Unverified email (`email_verified: false`) pretending to be `sk8jairo3@gmail.com` -> PERMISSION_DENIED
+2. Unverified email (`email_verified: false`) pretending to be `yohelly.bracho@gmail.com` -> PERMISSION_DENIED
 3. Non-admin (`taquilla`) attempting to list all `staffUsers` (PII scraping) -> PERMISSION_DENIED
 4. Non-admin (`caja`) attempting to create/promote themselves in `staffUsers` with `role: 'admin'` -> PERMISSION_DENIED
 5. `taquilla` user attempting to create a `barra` sale -> PERMISSION_DENIED

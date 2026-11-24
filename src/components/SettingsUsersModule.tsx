@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
 import {
+  ArrowRightLeft,
   Beer,
   CheckCircle2,
   ClipboardList,
+  Copy,
+  Crown,
   Eye,
   EyeOff,
   KeyRound,
   Lock,
+  Mail,
   Plus,
   ShieldCheck,
   Ticket,
@@ -15,16 +19,20 @@ import {
   UserCheck,
   UserCog,
   UserX,
+  X,
 } from 'lucide-react';
 import {
-  BOOTSTRAP_ADMIN_EMAIL,
   createEmailPasswordAuthUser,
+  emailToDocId,
   linkOrUpdateMyPassword,
+  sendUserPasswordReset,
 } from '../firebase';
 import { StaffUserAccount, UserRole } from '../types';
+import { formatDateSpanish, formatTime } from '../utils/formatters';
 
 interface SettingsUsersModuleProps {
   currentUserEmail: string;
+  primaryAdminEmail: string;
   staffUsers: StaffUserAccount[];
   allowEmployeeProductEdit: boolean;
   onToggleAllowEmployeeEdit: (allowed: boolean) => void;
@@ -35,17 +43,26 @@ interface SettingsUsersModuleProps {
     active: boolean;
   }) => Promise<void>;
   onDeleteStaffUser: (userId: string) => Promise<void>;
+  onTransferPrimaryAdmin: (params: {
+    newEmail: string;
+    newName: string;
+    keepPreviousAsAdmin: boolean;
+  }) => Promise<void>;
+  onMarkUserPasswordUpdated: (userId: string) => Promise<void>;
   previewRole: UserRole;
   onChangePreviewRole: (role: UserRole) => void;
 }
 
 export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
   currentUserEmail,
+  primaryAdminEmail,
   staffUsers,
   allowEmployeeProductEdit,
   onToggleAllowEmployeeEdit,
   onSaveStaffUser,
   onDeleteStaffUser,
+  onTransferPrimaryAdmin,
+  onMarkUserPasswordUpdated,
   previewRole,
   onChangePreviewRole,
 }) => {
@@ -53,11 +70,32 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
   const [email, setEmail] = useState('');
   const [staffPassword, setStaffPassword] = useState('');
   const [showStaffPass, setShowStaffPass] = useState(false);
-  const [role, setRole] = useState<UserRole>('taquilla');
+  const [role, setRole] = useState<UserRole>('caja');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<StaffUserAccount | null>(
+    null
+  );
+
+  // Primary Admin Transfer state
+  const [showTransferForm, setShowTransferForm] = useState(false);
+  const [transferEmail, setTransferEmail] = useState('');
+  const [transferName, setTransferName] = useState('');
+  const [keepPreviousAsAdmin, setKeepPreviousAsAdmin] = useState(true);
+  const [transferring, setTransferring] = useState(false);
+  const [transferError, setTransferError] = useState<string | null>(null);
+
+  // Per-User Password Management Modal state
+  const [passwordTarget, setPasswordTarget] = useState<StaffUserAccount | null>(
+    null
+  );
+  const [targetNewPassword, setTargetNewPassword] = useState('');
+  const [showTargetPass, setShowTargetPass] = useState(true);
+  const [savingTargetPass, setSavingTargetPass] = useState(false);
+  const [sendingReset, setSendingReset] = useState(false);
+  const [targetPassError, setTargetPassError] = useState<string | null>(null);
+  const [targetPassSuccess, setTargetPassSuccess] = useState<string | null>(
     null
   );
 
@@ -67,9 +105,15 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
   const [savingMyPass, setSavingMyPass] = useState(false);
   const [myPassError, setMyPassError] = useState<string | null>(null);
 
+  const normalizedPrimaryEmail = primaryAdminEmail.trim().toLowerCase();
+  const normalizedCurrentEmail = currentUserEmail.trim().toLowerCase();
+  const primaryOwnerRecord = staffUsers.find(
+    (u) => u.email.trim().toLowerCase() === normalizedPrimaryEmail
+  );
+
   const showFlash = (msg: string) => {
     setFlash(msg);
-    setTimeout(() => setFlash(null), 4000);
+    setTimeout(() => setFlash(null), 4500);
   };
 
   const handleSetMyPassword = async (e: React.FormEvent) => {
@@ -82,9 +126,10 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
     setSavingMyPass(true);
     try {
       await linkOrUpdateMyPassword(myPassword);
+      await onMarkUserPasswordUpdated(emailToDocId(normalizedCurrentEmail));
       setMyPassword('');
       showFlash(
-        `Clave vinculada correctamente a ${currentUserEmail}. Ya puedes entrar con correo y clave.`
+        `Clave actualizada correctamente para ${currentUserEmail}. Ya puedes entrar con correo y clave.`
       );
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code || '';
@@ -136,10 +181,11 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
             cleanEmail,
             staffPassword
           );
+          await onMarkUserPasswordUpdated(emailToDocId(cleanEmail));
           extraNote =
             res === 'created'
-              ? ' Se envió enlace de verificación al correo.'
-              : ' El correo ya tenía clave registrada.';
+              ? ' Se creó la clave y se envió enlace de verificación al correo.'
+              : ' El correo ya tenía cuenta registrada; usa "Contraseña" en la lista para enviar enlace de cambio.';
         } catch (authErr: unknown) {
           const code = (authErr as { code?: string })?.code || '';
           extraNote =
@@ -152,7 +198,7 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
       setName('');
       setEmail('');
       setStaffPassword('');
-      setRole('taquilla');
+      setRole('caja');
       showFlash(
         `Usuario ${cleanName} (${cleanEmail}) guardado con éxito.${extraNote}`
       );
@@ -163,8 +209,130 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
     }
   };
 
+  const handleTransferSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTransferError(null);
+    const cleanEmail = transferEmail.trim().toLowerCase();
+    const cleanName = transferName.trim();
+    if (!cleanName || !cleanEmail.includes('@')) {
+      setTransferError(
+        'Ingresa el nombre y un correo electrónico válido para el nuevo Administrador Total.'
+      );
+      return;
+    }
+    setTransferring(true);
+    try {
+      await onTransferPrimaryAdmin({
+        newEmail: cleanEmail,
+        newName: cleanName,
+        keepPreviousAsAdmin,
+      });
+      setTransferEmail('');
+      setTransferName('');
+      setShowTransferForm(false);
+      showFlash(
+        `Propiedad principal transferida a ${cleanName} (${cleanEmail}). Ahora es el Administrador Total / Dueño.`
+      );
+    } catch {
+      setTransferError(
+        'No se pudo transferir el correo principal. Verifica tu conexión e intenta de nuevo.'
+      );
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  const openPasswordModal = (user: StaffUserAccount) => {
+    setPasswordTarget(user);
+    setTargetNewPassword('');
+    setShowTargetPass(true);
+    setTargetPassError(null);
+    setTargetPassSuccess(null);
+  };
+
+  const handleSaveTargetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordTarget) return;
+    setTargetPassError(null);
+    setTargetPassSuccess(null);
+
+    if (targetNewPassword.length < 6) {
+      setTargetPassError('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+
+    const isSelf =
+      passwordTarget.email.trim().toLowerCase() === normalizedCurrentEmail;
+
+    setSavingTargetPass(true);
+    try {
+      if (isSelf) {
+        await linkOrUpdateMyPassword(targetNewPassword);
+        await onMarkUserPasswordUpdated(passwordTarget.id);
+        setTargetPassSuccess(
+          'Tu contraseña se actualizó inmediatamente en Firebase Auth.'
+        );
+        showFlash(`Contraseña actualizada para ${passwordTarget.email}.`);
+      } else {
+        const res = await createEmailPasswordAuthUser(
+          passwordTarget.email,
+          targetNewPassword
+        );
+        await onMarkUserPasswordUpdated(passwordTarget.id);
+        if (res === 'created') {
+          setTargetPassSuccess(
+            'Clave inicial creada en Firebase Auth y correo de verificación enviado. Cópiala antes de cerrar esta ventana si deseas entregarla ahora.'
+          );
+          showFlash(`Clave inicial asignada a ${passwordTarget.name}.`);
+        } else {
+          await sendUserPasswordReset(passwordTarget.email);
+          setTargetPassSuccess(
+            `Esta cuenta ya tenía clave en Firebase Auth. Por seguridad, se envió automáticamente un enlace de cambio de contraseña a ${passwordTarget.email}.`
+          );
+          showFlash(
+            `Enlace de cambio de contraseña enviado a ${passwordTarget.email}.`
+          );
+        }
+      }
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/operation-not-allowed') {
+        setTargetPassError(
+          'Activa "Correo electrónico/contraseña" en Firebase Console → Authentication → Sign-in method.'
+        );
+      } else if (code === 'auth/weak-password') {
+        setTargetPassError('Clave muy débil. Usa al menos 6 caracteres.');
+      } else {
+        setTargetPassError(
+          'No se pudo actualizar la contraseña. Intenta enviar el enlace de restablecimiento.'
+        );
+      }
+    } finally {
+      setSavingTargetPass(false);
+    }
+  };
+
+  const handleSendResetEmail = async (user: StaffUserAccount) => {
+    setTargetPassError(null);
+    setTargetPassSuccess(null);
+    setSendingReset(true);
+    try {
+      await sendUserPasswordReset(user.email);
+      await onMarkUserPasswordUpdated(user.id);
+      const msg = `Se envió un enlace seguro para cambiar la contraseña a ${user.email}.`;
+      setTargetPassSuccess(msg);
+      showFlash(msg);
+    } catch {
+      setTargetPassError(
+        'No se pudo enviar el correo de cambio de contraseña. Verifica que el usuario ya haya activado su cuenta o intenta asignar una clave inicial.'
+      );
+    } finally {
+      setSendingReset(false);
+    }
+  };
+
   const handleRoleUpdate = async (user: StaffUserAccount, nextRole: UserRole) => {
-    if (user.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL) return;
+    if (user.email.trim().toLowerCase() === normalizedPrimaryEmail) return;
     await onSaveStaffUser({
       name: user.name,
       email: user.email,
@@ -175,7 +343,7 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
   };
 
   const handleToggleActive = async (user: StaffUserAccount) => {
-    if (user.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL) return;
+    if (user.email.trim().toLowerCase() === normalizedPrimaryEmail) return;
     await onSaveStaffUser({
       name: user.name,
       email: user.email,
@@ -189,12 +357,20 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
     );
   };
 
-  const getRoleBadge = (r: UserRole) => {
+  const getRoleBadge = (r: UserRole, isOwner = false) => {
+    if (r === 'admin' && isOwner) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#0F172A] text-[#FBBF24] text-xs font-bold">
+          <Crown className="w-3.5 h-3.5" />
+          Administrador Total / Dueño
+        </span>
+      );
+    }
     if (r === 'admin') {
       return (
         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 border border-blue-200 text-[#1D4ED8] text-xs font-bold">
           <ShieldCheck className="w-3.5 h-3.5" />
-          Administrador (Total)
+          Administrador
         </span>
       );
     }
@@ -217,7 +393,7 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
     return (
       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-300 text-[#0F172A] text-xs font-bold">
         <Beer className="w-3.5 h-3.5" />
-        Caja / Barra
+        Caja / Barra (Operador)
       </span>
     );
   };
@@ -332,12 +508,149 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-        {/* Create User Form */}
-        <form
-          onSubmit={handleCreateSubmit}
-          className="xl:col-span-5 bg-white border border-[#CBD5E1] shadow-xs rounded-2xl p-5 space-y-4"
-        >
+      {/* Main "Usuarios y Permisos" Card — Owner Management + Authorized Emails + Password Controls */}
+      <div className="bg-white border border-[#CBD5E1] shadow-xs rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 bg-[#0F172A] text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <ShieldCheck className="w-5 h-5 text-[#FBBF24] shrink-0" />
+            <div>
+              <h3 className="font-display font-bold text-lg leading-tight">
+                Usuarios y Permisos
+              </h3>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Propietario principal, correos autorizados en Firestore y gestión de contraseñas.
+              </p>
+            </div>
+          </div>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 border border-white/15 text-xs font-bold text-[#FBBF24] shrink-0">
+            <Crown className="w-3.5 h-3.5" />
+            Administrador Total / Dueño
+          </span>
+        </div>
+
+        {/* Current Primary Owner Banner + Transfer Ownership Form */}
+        <div className="p-5 bg-[#F8FAFC] border-b border-[#CBD5E1] space-y-4">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Administrador Total Actual (Dueño de la App)
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-display font-bold text-lg text-[#0F172A]">
+                  {primaryOwnerRecord?.name || 'Yohelly Bracho'}
+                </span>
+                {getRoleBadge('admin', true)}
+              </div>
+              <div className="text-sm font-semibold text-[#1D4ED8] tabular-nums">
+                {normalizedPrimaryEmail}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowTransferForm((v) => !v);
+                setTransferError(null);
+              }}
+              className="min-h-[42px] px-4 py-2 rounded-xl border border-[#CBD5E1] bg-white hover:bg-slate-100 text-[#0F172A] text-xs font-bold flex items-center justify-center gap-2 transition-colors shrink-0"
+            >
+              <ArrowRightLeft className="w-4 h-4 text-[#1D4ED8]" />
+              {showTransferForm
+                ? 'Cancelar Transferencia'
+                : 'Transferir / Editar Correo Principal'}
+            </button>
+          </div>
+
+          {showTransferForm && (
+            <form
+              onSubmit={handleTransferSubmit}
+              className="p-4 rounded-xl bg-white border border-blue-200 space-y-3"
+            >
+              <div className="text-xs font-bold text-[#1D4ED8]">
+                Transferir Propiedad Principal (Sin modificar código)
+              </div>
+              <p className="text-xs text-slate-600">
+                El nuevo correo recibirá automáticamente el rol de{' '}
+                <strong>Administrador Total / Dueño</strong> y acceso completo a
+                Inventario, Eventos, Caja/POS, Tasa BCV, Finanzas/Reportes y
+                Configuración en Firestore.
+              </p>
+
+              {transferError && (
+                <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs font-semibold text-red-700">
+                  {transferError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Nombre del Nuevo Dueño
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={transferName}
+                    onChange={(e) => setTransferName(e.target.value)}
+                    placeholder="Ej: Yohelly Bracho"
+                    className="w-full min-h-[42px] px-3 py-2 border border-[#CBD5E1] rounded-xl text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Nuevo Correo Principal
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={transferEmail}
+                    onChange={(e) => setTransferEmail(e.target.value)}
+                    placeholder="nuevo.dueno@gmail.com"
+                    className="w-full min-h-[42px] px-3 py-2 border border-[#CBD5E1] rounded-xl text-sm tabular-nums"
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-xs text-slate-700 font-medium cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={keepPreviousAsAdmin}
+                  onChange={(e) => setKeepPreviousAsAdmin(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-[#1D4ED8]"
+                />
+                Mantener al correo anterior ({normalizedPrimaryEmail}) como
+                Administrador secundario autorizado
+              </label>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowTransferForm(false)}
+                  className="min-h-[40px] px-4 rounded-xl border border-[#CBD5E1] bg-white text-xs font-bold text-slate-700"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={transferring}
+                  className="min-h-[40px] px-4 rounded-xl bg-[#1D4ED8] hover:bg-blue-800 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5"
+                >
+                  <ArrowRightLeft className="w-3.5 h-3.5" />
+                  {transferring
+                    ? 'Transfiriendo...'
+                    : 'Confirmar Nuevo Dueño Principal'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+
+        <div className="p-5 grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+          {/* Create User Form */}
+          <form
+            onSubmit={handleCreateSubmit}
+            className="xl:col-span-5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-2xl p-5 space-y-4"
+          >
           <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
             <UserCog className="w-5 h-5 text-[#1D4ED8]" />
             <h3 className="font-display font-bold text-lg text-[#0F172A]">
@@ -472,13 +785,18 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
         </form>
 
         {/* Users List */}
-        <div className="xl:col-span-7 bg-white border border-[#CBD5E1] shadow-xs rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-            <h3 className="font-display font-bold text-lg text-[#0F172A]">
-              Usuarios Registrados ({staffUsers.length})
-            </h3>
-            <span className="text-xs text-slate-500">
-              Sincronizado en tiempo real
+        <div className="xl:col-span-7 bg-white border border-[#CBD5E1] rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-2">
+            <div>
+              <h3 className="font-display font-bold text-lg text-[#0F172A]">
+                Correos Autorizados ({staffUsers.length})
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Gestiona roles, acceso y contraseñas de todos los usuarios.
+              </p>
+            </div>
+            <span className="text-xs text-slate-500 shrink-0">
+              Firestore en vivo
             </span>
           </div>
 
@@ -489,8 +807,10 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
               </div>
             ) : (
               staffUsers.map((u) => {
-                const isBootstrap =
-                  u.email.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL;
+                const isPrimaryOwner =
+                  u.email.trim().toLowerCase() === normalizedPrimaryEmail;
+                const isSelf =
+                  u.email.trim().toLowerCase() === normalizedCurrentEmail;
                 return (
                   <div
                     key={u.id}
@@ -503,7 +823,7 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
                         <span className="font-display font-bold text-base text-[#0F172A] truncate">
                           {u.name}
                         </span>
-                        {getRoleBadge(u.role)}
+                        {getRoleBadge(u.role, isPrimaryOwner)}
                         {!u.active && (
                           <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 text-[11px] font-bold">
                             Suspendido
@@ -512,13 +832,30 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
                       </div>
                       <div className="text-xs tabular-nums text-slate-600 truncate">
                         {u.email}
-                        {isBootstrap && ' · (Dueño Principal)'}
+                        {isSelf && ' · (Tu sesión)'}
                       </div>
+                      {u.passwordUpdatedAt && (
+                        <div className="text-[11px] text-slate-500 tabular-nums">
+                          Última gestión de clave:{' '}
+                          {formatDateSpanish(u.passwordUpdatedAt.slice(0, 10))}{' '}
+                          {formatTime(u.passwordUpdatedAt)}
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => openPasswordModal(u)}
+                        title="Gestionar o cambiar contraseña"
+                        className="min-h-[38px] px-3 py-1 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-[#1D4ED8] text-xs font-bold flex items-center gap-1.5 transition-colors"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                        Contraseña
+                      </button>
+
                       <select
-                        disabled={isBootstrap}
+                        disabled={isPrimaryOwner}
                         value={u.role}
                         onChange={(e) =>
                           handleRoleUpdate(u, e.target.value as UserRole)
@@ -526,13 +863,13 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
                         aria-label={`Cambiar rol de ${u.name}`}
                         className="min-h-[38px] px-2.5 py-1 border border-[#CBD5E1] rounded-lg text-xs font-semibold bg-white disabled:bg-slate-100 disabled:text-slate-500"
                       >
+                        <option value="caja">Caja / Operador</option>
                         <option value="taquilla">Taquilla</option>
-                        <option value="caja">Caja / Barra</option>
                         <option value="mesero">Mesero</option>
-                        <option value="admin">Admin</option>
+                        <option value="admin">Administrador</option>
                       </select>
 
-                      {!isBootstrap && (
+                      {!isPrimaryOwner && (
                         <>
                           <button
                             type="button"
@@ -575,6 +912,7 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
               })
             )}
           </div>
+        </div>
         </div>
       </div>
 
@@ -630,6 +968,135 @@ export const SettingsUsersModule: React.FC<SettingsUsersModuleProps> = ({
           </button>
         </div>
       </form>
+
+      {/* Per-User Password Management Modal */}
+      {passwordTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl border border-[#CBD5E1] shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 bg-[#0F172A] text-white flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <KeyRound className="w-5 h-5 text-[#FBBF24] shrink-0" />
+                <div className="min-w-0">
+                  <h3 className="font-display font-bold text-base truncate">
+                    Contraseña · {passwordTarget.name}
+                  </h3>
+                  <p className="text-[11px] text-slate-300 tabular-nums truncate">
+                    {passwordTarget.email}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPasswordTarget(null)}
+                className="text-slate-300 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {passwordTarget.email.trim().toLowerCase() !==
+                normalizedCurrentEmail && (
+                <div className="p-3 rounded-xl bg-slate-50 border border-[#CBD5E1] text-xs text-slate-700 leading-relaxed">
+                  <strong>Protección de contraseñas:</strong> Firebase cifra las
+                  contraseñas y no permite leer claves anteriores en texto
+                  plano. Desde aquí puedes{' '}
+                  <strong>asignar una clave inicial visible</strong> (para
+                  cuentas nuevas) o{' '}
+                  <strong>enviar un enlace inmediato de cambio</strong> al
+                  correo del usuario.
+                </div>
+              )}
+
+              {targetPassError && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs font-semibold text-red-700">
+                  {targetPassError}
+                </div>
+              )}
+
+              {targetPassSuccess && (
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-800">
+                  {targetPassSuccess}
+                </div>
+              )}
+
+              <form onSubmit={handleSaveTargetPassword} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    {passwordTarget.email.trim().toLowerCase() ===
+                    normalizedCurrentEmail
+                      ? 'Nueva Contraseña para Tu Cuenta'
+                      : 'Asignar Clave Inicial (Visible antes de guardar)'}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type={showTargetPass ? 'text' : 'password'}
+                        value={targetNewPassword}
+                        onChange={(e) => setTargetNewPassword(e.target.value)}
+                        placeholder="Mínimo 6 caracteres..."
+                        className="w-full min-h-[44px] pl-3.5 pr-10 py-2 border border-[#CBD5E1] rounded-xl text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowTargetPass((v) => !v)}
+                        aria-label="Mostrar u ocultar clave"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                      >
+                        {showTargetPass ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                    {targetNewPassword && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(targetNewPassword);
+                          showFlash('Clave copiada al portapapeles.');
+                        }}
+                        title="Copiar clave"
+                        className="min-h-[44px] px-3 rounded-xl border border-[#CBD5E1] bg-slate-50 hover:bg-slate-100 text-slate-700"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={savingTargetPass || targetNewPassword.length < 6}
+                  className="w-full min-h-[44px] px-4 py-2 rounded-xl bg-[#1D4ED8] hover:bg-blue-800 disabled:opacity-50 text-white text-xs font-bold transition-colors"
+                >
+                  {savingTargetPass
+                    ? 'Aplicando...'
+                    : passwordTarget.email.trim().toLowerCase() ===
+                        normalizedCurrentEmail
+                      ? 'Cambiar Mi Contraseña Ahora'
+                      : 'Guardar Clave Inicial / Activar Acceso'}
+                </button>
+              </form>
+
+              <div className="pt-3 border-t border-slate-200 space-y-2">
+                <button
+                  type="button"
+                  disabled={sendingReset}
+                  onClick={() => handleSendResetEmail(passwordTarget)}
+                  className="w-full min-h-[44px] px-4 py-2 rounded-xl border border-[#CBD5E1] bg-slate-50 hover:bg-slate-100 text-[#0F172A] text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                >
+                  <Mail className="w-4 h-4 text-[#1D4ED8]" />
+                  {sendingReset
+                    ? 'Enviando enlace...'
+                    : 'Enviar Enlace de Cambio de Contraseña por Correo'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirm Delete Modal */}
       {confirmDelete && (
