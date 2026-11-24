@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import {
   Beer,
   CalendarDays,
@@ -262,7 +263,7 @@ export const SidebarAndNav: React.FC<SidebarAndNavProps> = ({
       </aside>
 
       {/* Top Bar (All Viewports) */}
-      <header className="sticky top-0 z-20 lg:pl-64 bg-white border-b border-[#CBD5E1]">
+      <header className="sticky top-0 z-20 lg:pl-64 bg-white border-b border-[#CBD5E1] pt-[env(safe-area-inset-top,0px)]">
         <div className="px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3">
           {/* Brand on Mobile/Tablet + Section Context */}
           <div className="flex items-center gap-3 min-w-0">
@@ -394,47 +395,51 @@ export const SidebarAndNav: React.FC<SidebarAndNavProps> = ({
         </div>
       </header>
 
-      {/* Mobile / Tablet Portrait Bottom Navigation Bar */}
-      <nav
-        aria-label="Navegación principal móvil"
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-[#E2E8F0]"
-      >
-        <div
-          className={`grid h-16 ${
-            visibleNavItems.length === 5
-              ? 'grid-cols-5'
-              : visibleNavItems.length === 4
-                ? 'grid-cols-4'
-                : visibleNavItems.length === 3
-                  ? 'grid-cols-3'
-                  : visibleNavItems.length === 2
-                    ? 'grid-cols-2'
-                    : 'grid-cols-1'
-          }`}
-        >
-          {visibleNavItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeSection === item.id;
-            const activeColor =
-              item.id === 'finanzas' ? 'text-[#1D4ED8]' : 'text-[#0F172A]';
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onSelectSection(item.id)}
-                className={`flex flex-col items-center justify-center gap-1 min-h-[48px] transition-colors ${
-                  isActive ? `${activeColor} font-bold` : 'text-slate-500 font-medium'
-                }`}
-              >
-                <Icon className="w-5 h-5" />
-                <span className="text-[11px] leading-none whitespace-nowrap">
-                  {item.shortLabel}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+      {/* Mobile / Tablet Portrait Bottom Navigation Bar (Portaled outside #root so no container overflow/transform can break position:fixed on iPadOS Safari) */}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <nav
+            aria-label="Navegación principal móvil"
+            className="no-print lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-slate-200 pb-[env(safe-area-inset-bottom,0px)] shadow-[0_-4px_16px_rgba(15,23,42,0.06)] touch-manipulation select-none [transform:translate3d(0,0,0)] after:content-[''] after:absolute after:left-0 after:right-0 after:top-full after:h-24 after:bg-white after:pointer-events-none"
+          >
+            <div
+              className={`grid h-16 ${
+                visibleNavItems.length === 5
+                  ? 'grid-cols-5'
+                  : visibleNavItems.length === 4
+                    ? 'grid-cols-4'
+                    : visibleNavItems.length === 3
+                      ? 'grid-cols-3'
+                      : visibleNavItems.length === 2
+                        ? 'grid-cols-2'
+                        : 'grid-cols-1'
+              }`}
+            >
+              {visibleNavItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeSection === item.id;
+                const activeColor =
+                  item.id === 'finanzas' ? 'text-[#1D4ED8]' : 'text-[#0F172A]';
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onSelectSection(item.id)}
+                    className={`flex flex-col items-center justify-center gap-1 min-h-[48px] transition-colors ${
+                      isActive ? `${activeColor} font-bold` : 'text-slate-500 font-medium'
+                    }`}
+                  >
+                    <Icon className="w-5 h-5" />
+                    <span className="text-[11px] leading-none whitespace-nowrap">
+                      {item.shortLabel}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>,
+          document.getElementById('bottom-nav-root') ?? document.body
+        )}
     </>
   );
 };

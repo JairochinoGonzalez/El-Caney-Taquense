@@ -12,6 +12,11 @@
     font-feature-settings: "zero" 0;
     background-color: #E2E8F0;
     color: #0F172A;
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    overscroll-behavior-y: none;
+    -webkit-text-size-adjust: 100%;
   }
 
   h1, h2, h3, h4, .font-display {

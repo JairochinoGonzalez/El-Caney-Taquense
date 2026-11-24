@@ -2026,7 +2026,7 @@ function MainApp() {
         onSignOut={handleSignOut}
       />
 
-      <main className="lg:pl-64 pb-24 lg:pb-10">
+      <main className="lg:pl-64 pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))] lg:pb-10">
         <div className="max-w-7xl mx-auto p-4 sm:p-6">
           {(activeSection === 'operacion' || effectiveRole === 'mesero') && (
             <NightOpsPanel
