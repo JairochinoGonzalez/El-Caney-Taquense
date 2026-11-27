@@ -50,6 +50,9 @@ import {
   ProductSoldSummary,
   SaleLineItem,
   SaleRecord,
+  ShrinkageOrigin,
+  ShrinkageReason,
+  ShrinkageRecord,
   StaffUserAccount,
   StockRestockRecord,
   TableOrder,
@@ -102,6 +105,7 @@ function MainApp() {
   const [closedShifts, setClosedShifts] = useState<ClosedShift[]>([]);
   const [payroll, setPayroll] = useState<PayrollRecord[]>([]);
   const [restocks, setRestocks] = useState<StockRestockRecord[]>([]);
+  const [shrinkages, setShrinkages] = useState<ShrinkageRecord[]>([]);
 
   const [bcvState, setBcvState] = useState<BcvRateState>({
     officialRate: FALLBACK_BCV_RATE,
@@ -228,6 +232,7 @@ function MainApp() {
           'tableOrders',
           'courtesies',
           'closedShifts',
+          'shrinkages',
         ];
         const adminCols = ['staffUsers', 'payroll', 'restocks'];
         const pendingUpdates: Array<{
@@ -248,6 +253,9 @@ function MainApp() {
             const payload: Record<string, unknown> = {
               staffEmails: nextStaffEmails,
             };
+            if (col === 'shrinkages') {
+              payload.adminEmails = nextAdminEmails;
+            }
             if (
               col === 'products' ||
               col === 'events' ||
@@ -654,6 +662,22 @@ function MainApp() {
       )
     );
 
+    // 8. shrinkages (Mermas y Roturas)
+    unsubs.push(
+      onSnapshot(
+        query(
+          collection(db, 'shrinkages'),
+          where('staffEmails', 'array-contains', userEmail)
+        ),
+        (snap) => {
+          const list = snap.docs.map((d) => d.data() as ShrinkageRecord);
+          list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+          setShrinkages(list);
+        },
+        (err) => reportError(err, OperationType.LIST, 'shrinkages')
+      )
+    );
+
     // 7. Admin-only collections
     if (actualRole === 'admin') {
       unsubs.push(
@@ -809,6 +833,7 @@ function MainApp() {
       'tableOrders',
       'courtesies',
       'closedShifts',
+      'shrinkages',
     ];
     const adminCollections = ['staffUsers', 'payroll', 'restocks'];
 
@@ -828,6 +853,9 @@ function MainApp() {
         const updatePayload: Record<string, unknown> = {
           staffEmails: nextStaffEmails,
         };
+        if (col === 'shrinkages') {
+          updatePayload.adminEmails = nextAdminEmails;
+        }
         if (
           col === 'products' ||
           col === 'events' ||
@@ -1787,6 +1815,18 @@ function MainApp() {
     const partyCourtesies = courtesies.filter(
       (c) => c.eventId === activeParty.id
     );
+    const partyShrinkages = shrinkages.filter(
+      (s) => s.eventId === activeParty.id
+    );
+    const shrinkageLossUsd = Number(
+      partyShrinkages
+        .reduce((sum, s) => sum + s.totalLossCostUsd, 0)
+        .toFixed(2)
+    );
+    const shrinkageUnitsTotal = partyShrinkages.reduce(
+      (sum, s) => sum + s.quantityUnits,
+      0
+    );
 
     const totalAttendees =
       activeParty.type === 'fiesta'
@@ -1924,6 +1964,9 @@ function MainApp() {
       remainingStock: snapshotStock(products).map((rs) =>
         stripUndefined({ ...rs })
       ),
+      shrinkages: partyShrinkages.map((s) => stripUndefined({ ...s })),
+      shrinkageLossUsd,
+      shrinkageUnitsTotal,
     };
 
     try {
@@ -1978,6 +2021,111 @@ function MainApp() {
     }
   };
 
+  // --- Inventory Shrinkage & Breakage Handlers (Mermas y Roturas) ---
+  const handleRecordShrinkage = async (params: {
+    productId: string;
+    quantityUnits: number;
+    reason: ShrinkageReason;
+    observation?: string;
+    origin: ShrinkageOrigin;
+    eventId?: string;
+    eventName?: string;
+  }) => {
+    if (!authorizedAccount) return;
+    const product = products.find((p) => p.id === params.productId);
+    if (!product) return;
+
+    const cleanQty = Math.max(
+      1,
+      Math.min(product.stockUnits, Math.floor(params.quantityUnits))
+    );
+    if (cleanQty <= 0) return;
+
+    const nowIso = new Date().toISOString();
+    const todayIso = getTodayISO();
+    const id = `merma-${Date.now()}`;
+    const unitCostUsd = Number(product.costUnitUsd || 0);
+    const totalLossCostUsd = Number((cleanQty * unitCostUsd).toFixed(2));
+    const totalLossCostBs = Number(
+      (totalLossCostUsd * bcvState.officialRate).toFixed(2)
+    );
+
+    const record: ShrinkageRecord = {
+      id,
+      timestamp: nowIso,
+      date: todayIso,
+      origin: params.origin,
+      eventId: params.origin === 'evento' ? params.eventId : undefined,
+      eventName:
+        params.origin === 'evento'
+          ? (params.eventName || '').slice(0, 120)
+          : undefined,
+      productId: product.id,
+      productName: product.name.slice(0, 120),
+      productPresentation: product.presentation
+        ? product.presentation.slice(0, 120)
+        : undefined,
+      quantityUnits: cleanQty,
+      unitCostUsd,
+      totalLossCostUsd,
+      totalLossCostBs,
+      reason: params.reason,
+      observation: params.observation
+        ? params.observation.trim().slice(0, 300)
+        : undefined,
+      recordedByEmail: authorizedAccount.email.toLowerCase(),
+      recordedByName: authorizedAccount.name.slice(0, 80),
+      recordedByRole: actualRole,
+    };
+
+    try {
+      const batch = writeBatch(db);
+      batch.set(
+        doc(db, 'shrinkages', id),
+        stripUndefined({
+          ...record,
+          staffEmails,
+          adminEmails,
+          createdAt: serverTimestamp(),
+        })
+      );
+      batch.update(doc(db, 'products', product.id), {
+        stockUnits: Math.max(0, product.stockUnits - cleanQty),
+        updatedAt: serverTimestamp(),
+      });
+      await batch.commit();
+    } catch (err) {
+      reportError(err, OperationType.WRITE, `shrinkages/${id}`);
+      throw err;
+    }
+  };
+
+  const handleDeleteShrinkage = async (
+    shrinkageId: string,
+    restoreStock = true
+  ) => {
+    if (actualRole !== 'admin') return;
+    const target = shrinkages.find((s) => s.id === shrinkageId);
+    if (!target) return;
+
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'shrinkages', shrinkageId));
+      if (restoreStock) {
+        const prod = products.find((p) => p.id === target.productId);
+        if (prod) {
+          batch.update(doc(db, 'products', prod.id), {
+            stockUnits: prod.stockUnits + target.quantityUnits,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      }
+      await batch.commit();
+    } catch (err) {
+      reportError(err, OperationType.DELETE, `shrinkages/${shrinkageId}`);
+    }
+  };
+
   // --- Auth Gate ---
   if (authLoading || !firebaseUser || !authorizedAccount) {
     return (
@@ -2007,7 +2155,7 @@ function MainApp() {
   }
 
   return (
-    <div className="min-h-screen bg-[#E2E8F0] text-[#0F172A]">
+    <div className="min-h-screen w-full max-w-full overflow-x-clip bg-[#E2E8F0] text-[#0F172A]">
       <SidebarAndNav
         actualRole={actualRole}
         effectiveRole={effectiveRole}
@@ -2026,8 +2174,8 @@ function MainApp() {
         onSignOut={handleSignOut}
       />
 
-      <main className="lg:pl-64 pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))] lg:pb-10">
-        <div className="max-w-7xl mx-auto p-4 sm:p-6">
+      <main className="w-full max-w-full overflow-x-hidden lg:pl-64 pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))] lg:pb-10">
+        <div className="w-full max-w-7xl mx-auto p-3.5 sm:p-6 min-w-0">
           {(activeSection === 'operacion' || effectiveRole === 'mesero') && (
             <NightOpsPanel
               role={effectiveRole}
@@ -2038,6 +2186,8 @@ function MainApp() {
               sales={sales}
               tableOrders={tableOrders}
               courtesies={courtesies}
+              shrinkages={shrinkages}
+              bcvRate={bcvState.officialRate}
               effectiveRate={effectiveRate}
               onRecordSale={handleRecordSale}
               onSaveTableOrder={handleSaveTableOrder}
@@ -2045,6 +2195,7 @@ function MainApp() {
               onCloseTableOrder={handleCloseTableOrder}
               onCancelTableOrder={handleCancelTableOrder}
               onRecordCourtesy={handleRecordCourtesy}
+              onRecordShrinkage={handleRecordShrinkage}
               onSuspendSale={handleSuspendSale}
               onDeleteSale={handleDeleteSale}
               onCloseParty={handleCloseParty}
@@ -2071,15 +2222,18 @@ function MainApp() {
               role={effectiveRole}
               actualRole={actualRole}
               userEmail={authorizedAccount.email}
+              userName={authorizedAccount.name}
               allowEmployeeProductEdit={allowEmployeeProductEdit}
               onToggleAllowEmployeeEdit={handleToggleAllowEmployeeEdit}
               products={products}
               restocks={restocks}
+              shrinkages={shrinkages}
               bcvRate={bcvState.officialRate}
               effectiveRate={effectiveRate}
               onAddProduct={handleAddProduct}
               onUpdateProduct={handleUpdateProduct}
               onRestockProduct={handleRestockProduct}
+              onRecordShrinkage={handleRecordShrinkage}
               onDeleteProduct={handleDeleteProduct}
             />
           )}
@@ -2095,9 +2249,11 @@ function MainApp() {
               closedShifts={closedShifts}
               payroll={payroll}
               restocks={restocks}
+              shrinkages={shrinkages}
               staffUsers={staffUsers}
               onAddPayroll={handleAddPayroll}
               onDeletePayroll={handleDeletePayroll}
+              onDeleteShrinkage={handleDeleteShrinkage}
             />
           )}
 

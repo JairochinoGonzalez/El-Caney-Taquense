@@ -253,6 +253,68 @@ export function downloadClosingShiftPdf(shift: ClosedShift): void {
 
   drawDivider();
 
+  // Mermas y Roturas (Perdida al Costo)
+  const pdfShrinkages = shift.shrinkages || [];
+  const pdfShrinkageLossUsd =
+    shift.shrinkageLossUsd !== undefined
+      ? shift.shrinkageLossUsd
+      : pdfShrinkages.reduce((sum, s) => sum + s.totalLossCostUsd, 0);
+  const pdfShrinkageUnits =
+    shift.shrinkageUnitsTotal !== undefined
+      ? shift.shrinkageUnitsTotal
+      : pdfShrinkages.reduce((sum, s) => sum + s.quantityUnits, 0);
+
+  checkPageBreak(20);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12.5);
+  doc.setTextColor(234, 88, 12); // Orange-600
+  doc.text('MERMAS Y ROTURAS (PÉRDIDA AL COSTO)', margin, y);
+  doc.setTextColor(15, 23, 42);
+  y += 6;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text(`Total perdido (${pdfShrinkageUnits} unid.):`, margin, y);
+  doc.setTextColor(194, 65, 12);
+  doc.text(formatUsd(pdfShrinkageLossUsd), pageWidth - margin, y, {
+    align: 'right',
+  });
+  doc.setTextColor(15, 23, 42);
+  y += 6;
+
+  if (pdfShrinkages.length === 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text('Sin mermas ni roturas registradas en este evento.', margin, y);
+    y += 6;
+  } else {
+    for (const sh of pdfShrinkages) {
+      checkPageBreak(18);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10.5);
+      const lineTitle = `${formatTime(sh.timestamp)} · ${sh.quantityUnits}x ${sh.productName}`;
+      doc.text(doc.splitTextToSize(lineTitle, contentWidth - 24), margin, y);
+      doc.setTextColor(194, 65, 12);
+      doc.text(`-${formatUsd(sh.totalLossCostUsd)}`, pageWidth - margin, y, {
+        align: 'right',
+      });
+      doc.setTextColor(15, 23, 42);
+      y += 5;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      const reasonLines = doc.splitTextToSize(
+        `Motivo: ${sh.reason}${sh.observation ? ` — ${sh.observation}` : ''} (${sh.recordedByName})`,
+        contentWidth
+      );
+      doc.setTextColor(71, 85, 105);
+      doc.text(reasonLines, margin, y);
+      doc.setTextColor(15, 23, 42);
+      y += reasonLines.length * 4.6 + 2.5;
+    }
+  }
+
+  drawDivider();
+
   // Auditoria de Ventas Suspendidas
   checkPageBreak(18);
   doc.setFont('helvetica', 'bold');

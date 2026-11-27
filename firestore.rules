@@ -221,7 +221,7 @@ service cloud.firestore {
 
     function isValidClosedShift(data) {
       return data.keys().hasAll(['id', 'eventId', 'eventName', 'eventDate', 'eventType', 'openedAt', 'closedAt', 'bcvRate', 'bufferBs', 'effectiveRate', 'totalAttendees', 'taquillaUsd', 'barraUsd', 'totalRevenueUsd', 'totalRevenueBs', 'baseBcvRevenueUsd', 'exchangeSurplusUsd', 'exchangeSurplusBs', 'cashUsdTotal', 'zelleUsdTotal', 'pagoMovilBsTotal', 'cogsUsd', 'productsSold', 'courtesies', 'suspendedSales', 'remainingStock', 'staffEmails', 'createdAt'])
-        && data.keys().hasOnly(['id', 'eventId', 'eventName', 'eventDate', 'eventType', 'eventSubType', 'openedAt', 'closedAt', 'bcvRate', 'bufferBs', 'effectiveRate', 'totalAttendees', 'taquillaUsd', 'barraUsd', 'totalRevenueUsd', 'totalRevenueBs', 'baseBcvRevenueUsd', 'exchangeSurplusUsd', 'exchangeSurplusBs', 'cashUsdTotal', 'zelleUsdTotal', 'pagoMovilBsTotal', 'tarjetaBsTotal', 'cogsUsd', 'productsSold', 'courtesies', 'suspendedSales', 'remainingStock', 'staffEmails', 'createdAt'])
+        && data.keys().hasOnly(['id', 'eventId', 'eventName', 'eventDate', 'eventType', 'eventSubType', 'openedAt', 'closedAt', 'bcvRate', 'bufferBs', 'effectiveRate', 'totalAttendees', 'taquillaUsd', 'barraUsd', 'totalRevenueUsd', 'totalRevenueBs', 'baseBcvRevenueUsd', 'exchangeSurplusUsd', 'exchangeSurplusBs', 'cashUsdTotal', 'zelleUsdTotal', 'pagoMovilBsTotal', 'tarjetaBsTotal', 'cogsUsd', 'productsSold', 'courtesies', 'suspendedSales', 'remainingStock', 'shrinkages', 'shrinkageLossUsd', 'shrinkageUnitsTotal', 'staffEmails', 'createdAt'])
         && isValidId(data.id)
         && isValidId(data.eventId)
         && data.eventName is string && data.eventName.size() >= 1 && data.eventName.size() <= 120
@@ -240,6 +240,9 @@ service cloud.firestore {
         && data.courtesies is list && data.courtesies.size() <= 150
         && data.suspendedSales is list && data.suspendedSales.size() <= 150
         && data.remainingStock is list && data.remainingStock.size() <= 150
+        && (!('shrinkages' in data) || (data.shrinkages is list && data.shrinkages.size() <= 150))
+        && (!('shrinkageLossUsd' in data) || (data.shrinkageLossUsd is number && data.shrinkageLossUsd >= 0 && data.shrinkageLossUsd <= 500000))
+        && (!('shrinkageUnitsTotal' in data) || (data.shrinkageUnitsTotal is number && data.shrinkageUnitsTotal >= 0 && data.shrinkageUnitsTotal <= 100000))
         && isValidEmailList(data.staffEmails, 30)
         && data.createdAt is timestamp;
     }
@@ -321,6 +324,32 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidShrinkage(data) {
+      return data.keys().hasAll(['id', 'timestamp', 'date', 'origin', 'productId', 'productName', 'quantityUnits', 'unitCostUsd', 'totalLossCostUsd', 'totalLossCostBs', 'reason', 'recordedByEmail', 'recordedByName', 'recordedByRole', 'staffEmails', 'adminEmails', 'createdAt'])
+        && data.keys().hasOnly(['id', 'timestamp', 'date', 'origin', 'eventId', 'eventName', 'productId', 'productName', 'productPresentation', 'quantityUnits', 'unitCostUsd', 'totalLossCostUsd', 'totalLossCostBs', 'reason', 'observation', 'recordedByEmail', 'recordedByName', 'recordedByRole', 'staffEmails', 'adminEmails', 'createdAt'])
+        && isValidId(data.id)
+        && data.timestamp is string && data.timestamp.size() >= 8 && data.timestamp.size() <= 40
+        && data.date is string && data.date.size() >= 8 && data.date.size() <= 20
+        && data.origin in ['evento', 'inventario_general']
+        && (!('eventId' in data) || isValidId(data.eventId))
+        && (!('eventName' in data) || (data.eventName is string && data.eventName.size() <= 120))
+        && isValidId(data.productId)
+        && data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120
+        && (!('productPresentation' in data) || (data.productPresentation is string && data.productPresentation.size() <= 120))
+        && data.quantityUnits is number && data.quantityUnits >= 1 && data.quantityUnits <= 10000
+        && data.unitCostUsd is number && data.unitCostUsd >= 0 && data.unitCostUsd <= 50000
+        && data.totalLossCostUsd is number && data.totalLossCostUsd >= 0 && data.totalLossCostUsd <= 500000
+        && data.totalLossCostBs is number && data.totalLossCostBs >= 0 && data.totalLossCostBs <= 500000000
+        && data.reason in ['Botella partida en servicio', 'Reventada en congelador', 'Producto defectuoso / malo', 'Otro']
+        && (!('observation' in data) || (data.observation is string && data.observation.size() <= 300))
+        && data.recordedByEmail is string && data.recordedByEmail.size() >= 3 && data.recordedByEmail.size() <= 120
+        && data.recordedByName is string && data.recordedByName.size() >= 1 && data.recordedByName.size() <= 80
+        && data.recordedByRole in ['admin', 'taquilla', 'caja', 'mesero']
+        && isValidEmailList(data.staffEmails, 30)
+        && isValidEmailList(data.adminEmails, 10)
+        && data.createdAt is timestamp;
+    }
+
     // --- Collection Rules ---
 
     // Connection test doc
@@ -379,6 +408,7 @@ service cloud.firestore {
         && (
           isAdmin() ||
           (isStationOperator() && incoming().diff(existing()).affectedKeys().hasOnly(['stockUnits', 'costUnitUsd', 'costCaseUsd', 'updatedAt'])) ||
+          (isMesero() && incoming().diff(existing()).affectedKeys().hasOnly(['stockUnits', 'updatedAt']) && incoming().stockUnits <= existing().stockUnits) ||
           (isStationOperator() && configAllowsEmployeeEdit() && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'presentation', 'photoUrl', 'category', 'unitType', 'caseSize', 'priceUnitUsd', 'priceCaseUsd', 'costUnitUsd', 'costCaseUsd', 'stockUnits', 'updatedAt']))
         );
       allow delete: if isValidId(productId) && isAdmin();
@@ -599,6 +629,40 @@ service cloud.firestore {
           && isAdmin();
         allow delete: if isValidId(restockId) && isValidId(chunkId) && isAdmin();
       }
+    }
+
+    // Inventory Shrinkage & Breakage Losses (Mermas y Roturas)
+    match /shrinkages/{shrinkageId} {
+      allow get: if isValidId(shrinkageId) && isAnyStaff();
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && (
+        userEmailLower() in resource.data.staffEmails ||
+        userEmailLower() in resource.data.adminEmails
+      ));
+      allow create: if isValidId(shrinkageId)
+        && isValidShrinkage(incoming())
+        && incoming().id == shrinkageId
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/products/$(incoming().productId))
+        && (
+          incoming().origin == 'inventario_general' ||
+          (incoming().origin == 'evento' && 'eventId' in incoming() && exists(/databases/$(database)/documents/events/$(incoming().eventId)))
+        )
+        && (
+          isAdmin() ||
+          (
+            isAnyStaff()
+            && incoming().recordedByEmail == userEmailLower()
+            && incoming().staffEmails == configStaffEmails()
+            && incoming().adminEmails == configAdminEmails()
+          )
+        );
+      allow update: if isValidId(shrinkageId)
+        && isValidShrinkage(incoming())
+        && incoming().id == existing().id
+        && incoming().productId == existing().productId
+        && incoming().createdAt == existing().createdAt
+        && isAdmin();
+      allow delete: if isValidId(shrinkageId) && isAdmin();
     }
   }
 }

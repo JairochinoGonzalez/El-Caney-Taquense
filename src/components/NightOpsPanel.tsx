@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  AlertOctagon,
   AlertTriangle,
   ArrowLeft,
   Banknote,
@@ -36,6 +37,9 @@ import {
   ProductCategory,
   SaleLineItem,
   SaleRecord,
+  ShrinkageOrigin,
+  ShrinkageReason,
+  ShrinkageRecord,
   TableOrder,
   UserRole,
 } from '../types';
@@ -46,6 +50,7 @@ import {
   formatUsd,
   getPaymentLabel,
 } from '../utils/formatters';
+import { ShrinkageModal } from './ShrinkageModal';
 
 type SinglePaymentChannel = 'efectivo_usd' | 'zelle' | 'pago_movil' | 'tarjeta';
 
@@ -112,6 +117,8 @@ interface NightOpsPanelProps {
   sales: SaleRecord[];
   tableOrders: TableOrder[];
   courtesies: CourtesyRecord[];
+  shrinkages: ShrinkageRecord[];
+  bcvRate: number;
   effectiveRate: number;
   onRecordSale: (params: {
     kind: 'barra' | 'taquilla';
@@ -148,6 +155,15 @@ interface NightOpsPanelProps {
     reason: string;
     items: CourtesyItem[];
   }) => void;
+  onRecordShrinkage: (params: {
+    productId: string;
+    quantityUnits: number;
+    reason: ShrinkageReason;
+    observation?: string;
+    origin: ShrinkageOrigin;
+    eventId?: string;
+    eventName?: string;
+  }) => Promise<void>;
   onSuspendSale: (saleId: string, reason: string) => void;
   onDeleteSale: (saleId: string) => void;
   onCloseParty: () => void;
@@ -163,6 +179,8 @@ export const NightOpsPanel: React.FC<NightOpsPanelProps> = ({
   sales,
   tableOrders,
   courtesies,
+  shrinkages,
+  bcvRate,
   effectiveRate,
   onRecordSale,
   onSaveTableOrder,
@@ -170,6 +188,7 @@ export const NightOpsPanel: React.FC<NightOpsPanelProps> = ({
   onCloseTableOrder,
   onCancelTableOrder,
   onRecordCourtesy,
+  onRecordShrinkage,
   onSuspendSale,
   onDeleteSale,
   onCloseParty,
@@ -252,6 +271,9 @@ export const NightOpsPanel: React.FC<NightOpsPanelProps> = ({
   // Confirm Close Party Modal
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
 
+  // Shrinkage / Breakage Modal (Mermas y Roturas)
+  const [showShrinkageModal, setShowShrinkageModal] = useState(false);
+
   // Feedback banner
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
 
@@ -267,6 +289,26 @@ export const NightOpsPanel: React.FC<NightOpsPanelProps> = ({
       .filter((s) => s.eventId === activeParty.id)
       .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }, [sales, activeParty]);
+
+  const partyShrinkages = useMemo(() => {
+    if (!activeParty) return [];
+    return shrinkages.filter((s) => s.eventId === activeParty.id);
+  }, [shrinkages, activeParty]);
+
+  const partyShrinkageUnits = useMemo(
+    () => partyShrinkages.reduce((sum, s) => sum + s.quantityUnits, 0),
+    [partyShrinkages]
+  );
+
+  const partyShrinkageLossUsd = useMemo(
+    () =>
+      Number(
+        partyShrinkages
+          .reduce((sum, s) => sum + s.totalLossCostUsd, 0)
+          .toFixed(2)
+      ),
+    [partyShrinkages]
+  );
 
   const activePartySales = useMemo(
     () => partySales.filter((s) => s.status === 'active'),
@@ -1171,19 +1213,47 @@ export const NightOpsPanel: React.FC<NightOpsPanelProps> = ({
                 </span>
               </>
             )}
+            {partyShrinkageUnits > 0 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="text-[#C2410C] font-semibold">
+                  Mermas:{' '}
+                  <strong className="tabular-nums">
+                    {partyShrinkageUnits} unid.
+                  </strong>
+                  {role === 'admin' && (
+                    <span className="tabular-nums">
+                      {' '}
+                      (-{formatUsd(partyShrinkageLossUsd)})
+                    </span>
+                  )}
+                </span>
+              </>
+            )}
           </div>
         </div>
 
-        {role !== 'mesero' && (
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
-            onClick={() => setShowCloseConfirm(true)}
-            className="min-h-[50px] px-5 py-3 rounded-xl bg-[#EF4444] hover:bg-red-600 text-white font-display font-bold text-sm flex items-center justify-center gap-2 transition-colors whitespace-nowrap shrink-0"
+            onClick={() => setShowShrinkageModal(true)}
+            className="min-h-[46px] sm:min-h-[50px] px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#EA580C] to-[#DC2626] hover:from-[#C2410C] hover:to-[#B91C1C] text-white font-display font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-colors shadow-xs whitespace-nowrap"
           >
-            <PowerOff className="w-4 h-4" />
-            CERRAR FIESTA Y HACER CIERRE DE CAJA
+            <AlertOctagon className="w-4 h-4 shrink-0" />
+            Registrar Merma / Rotura
           </button>
-        )}
+
+          {role !== 'mesero' && (
+            <button
+              type="button"
+              onClick={() => setShowCloseConfirm(true)}
+              className="min-h-[46px] sm:min-h-[50px] px-4 sm:px-5 py-2.5 rounded-xl bg-[#EF4444] hover:bg-red-600 text-white font-display font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-colors whitespace-nowrap"
+            >
+              <PowerOff className="w-4 h-4 shrink-0" />
+              CERRAR FIESTA Y HACER CIERRE DE CAJA
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Station Selector: Only Admin switches stations; Taquilla & Caja see ONLY their assigned station */}
@@ -2661,44 +2731,105 @@ export const NightOpsPanel: React.FC<NightOpsPanelProps> = ({
               )}
             </div>
 
-            {/* Cortesías List */}
-            <div className="lg:col-span-4 bg-white border border-[#CBD5E1] shadow-xs rounded-2xl overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-                <h3 className="font-display font-bold text-base text-[#6366F1] flex items-center gap-2">
-                  <Gift className="w-4 h-4" />
-                  Cortesías / Consumo Interno
-                </h3>
-                <span className="text-xs font-bold text-slate-600 tabular-nums">
-                  {partyCourtesies.length}
-                </span>
+            {/* Cortesías + Mermas del Evento */}
+            <div className="lg:col-span-4 space-y-5">
+              {/* Cortesías List */}
+              <div className="bg-white border border-[#CBD5E1] shadow-xs rounded-2xl overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+                  <h3 className="font-display font-bold text-base text-[#6366F1] flex items-center gap-2">
+                    <Gift className="w-4 h-4" />
+                    Cortesías / Consumo Interno
+                  </h3>
+                  <span className="text-xs font-bold text-slate-600 tabular-nums">
+                    {partyCourtesies.length}
+                  </span>
+                </div>
+
+                <div className="divide-y divide-slate-200">
+                  {partyCourtesies.length === 0 ? (
+                    <div className="p-6 text-center text-sm text-slate-500">
+                      Sin cortesías registradas hoy.
+                    </div>
+                  ) : (
+                    partyCourtesies.map((cort) => (
+                      <div key={cort.id} className="p-4 space-y-1">
+                        <div className="flex items-center justify-between text-xs text-slate-500">
+                          <span className="tabular-nums">
+                            {formatTime(cort.timestamp)}
+                          </span>
+                          <span className="font-bold text-[#6366F1]">$0.00</span>
+                        </div>
+                        <div className="font-semibold text-sm text-[#0F172A]">
+                          {cort.recipient}
+                        </div>
+                        <div className="text-xs text-slate-600">{cort.reason}</div>
+                        <div className="text-xs font-medium text-indigo-800 pt-0.5">
+                          {cort.items
+                            .map((i) => `${i.quantity}x ${i.name}`)
+                            .join(', ')}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
 
-              <div className="divide-y divide-slate-200">
-                {partyCourtesies.length === 0 ? (
-                  <div className="p-6 text-center text-sm text-slate-500">
-                    Sin cortesías registradas hoy.
-                  </div>
-                ) : (
-                  partyCourtesies.map((cort) => (
-                    <div key={cort.id} className="p-4 space-y-1">
-                      <div className="flex items-center justify-between text-xs text-slate-500">
-                        <span className="tabular-nums">
-                          {formatTime(cort.timestamp)}
-                        </span>
-                        <span className="font-bold text-[#6366F1]">$0.00</span>
-                      </div>
-                      <div className="font-semibold text-sm text-[#0F172A]">
-                        {cort.recipient}
-                      </div>
-                      <div className="text-xs text-slate-600">{cort.reason}</div>
-                      <div className="text-xs font-medium text-indigo-800 pt-0.5">
-                        {cort.items
-                          .map((i) => `${i.quantity}x ${i.name}`)
-                          .join(', ')}
-                      </div>
+              {/* Mermas y Roturas del Evento */}
+              <div className="bg-white border border-orange-200 shadow-xs rounded-2xl overflow-hidden">
+                <div className="px-5 py-4 border-b border-orange-200 bg-orange-50/70 flex items-center justify-between gap-2">
+                  <h3 className="font-display font-bold text-base text-[#C2410C] flex items-center gap-2">
+                    <AlertOctagon className="w-4 h-4 shrink-0" />
+                    Mermas y Roturas
+                  </h3>
+                  <span className="text-xs font-extrabold text-[#C2410C] tabular-nums">
+                    {partyShrinkageUnits} unid.
+                    {role === 'admin' ? ` · -${formatUsd(partyShrinkageLossUsd)}` : ''}
+                  </span>
+                </div>
+
+                <div className="divide-y divide-slate-200">
+                  {partyShrinkages.length === 0 ? (
+                    <div className="p-5 text-center space-y-2">
+                      <p className="text-sm text-slate-500">
+                        Sin botellas partidas ni mermas en este evento.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setShowShrinkageModal(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-50 hover:bg-orange-100 border border-orange-200 text-xs font-bold text-[#C2410C]"
+                      >
+                        <AlertOctagon className="w-3.5 h-3.5" />
+                        Registrar Merma / Rotura
+                      </button>
                     </div>
-                  ))
-                )}
+                  ) : (
+                    partyShrinkages.map((sh) => (
+                      <div key={sh.id} className="p-4 space-y-1">
+                        <div className="flex items-center justify-between text-xs text-slate-500 gap-2">
+                          <span className="tabular-nums">
+                            {formatTime(sh.timestamp)} · {sh.recordedByName}
+                          </span>
+                          <span className="font-bold text-[#C2410C] tabular-nums">
+                            {role === 'admin'
+                              ? `-${formatUsd(sh.totalLossCostUsd)}`
+                              : '$0.00 caja'}
+                          </span>
+                        </div>
+                        <div className="font-semibold text-sm text-[#0F172A]">
+                          {sh.quantityUnits}× {sh.productName}
+                        </div>
+                        <div className="text-xs font-semibold text-orange-800">
+                          {sh.reason}
+                        </div>
+                        {sh.observation && (
+                          <div className="text-xs text-slate-600">
+                            {sh.observation}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -4043,6 +4174,26 @@ export const NightOpsPanel: React.FC<NightOpsPanelProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal: Registrar Merma / Rotura vinculada al Evento Activo */}
+      <ShrinkageModal
+        isOpen={showShrinkageModal}
+        onClose={() => setShowShrinkageModal(false)}
+        products={products}
+        bcvRate={bcvRate}
+        origin="evento"
+        activeEvent={activeParty}
+        userName={userName}
+        userEmail={userEmail}
+        userRole={role}
+        showCostPreview={role === 'admin'}
+        onSubmit={async (params) => {
+          await onRecordShrinkage(params);
+          triggerFlash(
+            'Merma / rotura descontada del stock ($0.00 ingreso a caja).'
+          );
+        }}
+      />
     </div>
   );
 };

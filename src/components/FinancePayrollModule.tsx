@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  AlertOctagon,
   AlertTriangle,
   ChevronDown,
   DollarSign,
@@ -7,6 +8,7 @@ import {
   Lock,
   Package,
   Plus,
+  RotateCcw,
   Trash2,
   TrendingUp,
   Unlock,
@@ -20,6 +22,8 @@ import {
   PayrollRecord,
   Product,
   SaleRecord,
+  ShrinkageOrigin,
+  ShrinkageRecord,
   StaffUserAccount,
   StockRestockRecord,
   UserRole,
@@ -33,6 +37,7 @@ import {
   getTodayISO,
 } from '../utils/formatters';
 import { downloadClosingShiftPdf } from '../utils/pdfGenerator';
+import { SHRINKAGE_REASONS } from './ShrinkageModal';
 
 type DateRangePreset = 'today' | 'weekend' | 'month' | 'custom';
 
@@ -46,9 +51,11 @@ interface FinancePayrollModuleProps {
   closedShifts: ClosedShift[];
   payroll: PayrollRecord[];
   restocks: StockRestockRecord[];
+  shrinkages: ShrinkageRecord[];
   staffUsers: StaffUserAccount[];
   onAddPayroll: (record: Omit<PayrollRecord, 'id'>) => void;
   onDeletePayroll: (id: string) => void;
+  onDeleteShrinkage: (shrinkageId: string, restoreStock?: boolean) => void;
 }
 
 function mapUserRoleToEmployeeRole(role: UserRole): EmployeeRole {
@@ -68,12 +75,19 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
   closedShifts,
   payroll,
   restocks,
+  shrinkages,
   staffUsers,
   onAddPayroll,
   onDeletePayroll,
+  onDeleteShrinkage,
 }) => {
   const todayIso = getTodayISO();
   const [rangePreset, setRangePreset] = useState<DateRangePreset>('month');
+  const [shrinkageOriginFilter, setShrinkageOriginFilter] = useState<
+    'all' | ShrinkageOrigin
+  >('all');
+  const [confirmVoidShrinkage, setConfirmVoidShrinkage] =
+    useState<ShrinkageRecord | null>(null);
   const [customStart, setCustomStart] = useState<string>(
     addDaysISO(todayIso, -7)
   );
@@ -211,7 +225,43 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
       0
     );
 
-    const netProfitUsd = grossUsd - cogsUsd - payrollTotalUsd;
+    const shrinkagesFiltered = shrinkages.filter((s) => inRange(s.date));
+    const shrinkageLossUsd = Number(
+      shrinkagesFiltered
+        .reduce((sum, s) => sum + s.totalLossCostUsd, 0)
+        .toFixed(2)
+    );
+    const shrinkageUnitsTotal = shrinkagesFiltered.reduce(
+      (sum, s) => sum + s.quantityUnits,
+      0
+    );
+    const shrinkageEventUsd = Number(
+      shrinkagesFiltered
+        .filter((s) => s.origin === 'evento')
+        .reduce((sum, s) => sum + s.totalLossCostUsd, 0)
+        .toFixed(2)
+    );
+    const shrinkageGeneralUsd = Number(
+      shrinkagesFiltered
+        .filter((s) => s.origin === 'inventario_general')
+        .reduce((sum, s) => sum + s.totalLossCostUsd, 0)
+        .toFixed(2)
+    );
+
+    const shrinkageByReason = SHRINKAGE_REASONS.map((reasonLabel) => {
+      const items = shrinkagesFiltered.filter((s) => s.reason === reasonLabel);
+      return {
+        reason: reasonLabel,
+        count: items.length,
+        units: items.reduce((sum, s) => sum + s.quantityUnits, 0),
+        lossUsd: Number(
+          items.reduce((sum, s) => sum + s.totalLossCostUsd, 0).toFixed(2)
+        ),
+      };
+    });
+
+    const netProfitUsd =
+      grossUsd - cogsUsd - shrinkageLossUsd - payrollTotalUsd;
 
     return {
       grossUsd,
@@ -222,9 +272,23 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
       restockInvestmentUsd,
       payrollTotalUsd,
       payrollFiltered,
+      shrinkagesFiltered,
+      shrinkageLossUsd,
+      shrinkageUnitsTotal,
+      shrinkageEventUsd,
+      shrinkageGeneralUsd,
+      shrinkageByReason,
       netProfitUsd,
     };
-  }, [filteredClosedShifts, activePartySalesInRange, restocks, payroll, startDate, endDate]);
+  }, [
+    filteredClosedShifts,
+    activePartySalesInRange,
+    restocks,
+    payroll,
+    shrinkages,
+    startDate,
+    endDate,
+  ]);
 
   const inventoryValuation = useMemo(() => {
     const costValueUsd = products.reduce(
@@ -275,8 +339,8 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
   return (
     <div className="space-y-6">
       {/* Owner Header & Date Filter */}
-      <div className="bg-white border border-[#CBD5E1] shadow-xs rounded-2xl p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <div>
+      <div className="bg-white border border-[#CBD5E1] shadow-xs rounded-2xl p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 w-full max-w-full min-w-0">
+        <div className="min-w-0">
           <div className="text-xs font-bold uppercase tracking-wider text-[#1D4ED8]">
             Módulo Exclusivo del Dueño
           </div>
@@ -291,8 +355,8 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex p-1 bg-[#F8FAFC] border border-[#CBD5E1] shadow-xs rounded-xl overflow-x-auto">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full lg:w-auto min-w-0">
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-1.5 p-1 bg-[#F8FAFC] border border-[#CBD5E1] shadow-xs rounded-xl w-full sm:w-auto">
             {(
               [
                 ['today', 'Hoy'],
@@ -305,7 +369,7 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
                 key={preset}
                 type="button"
                 onClick={() => setRangePreset(preset)}
-                className={`min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                className={`min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors text-center leading-tight flex items-center justify-center ${
                   rangePreset === preset
                     ? 'bg-[#1D4ED8] text-white'
                     : 'text-slate-600 hover:text-[#0F172A]'
@@ -317,19 +381,19 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
           </div>
 
           {rangePreset === 'custom' && (
-            <div className="flex items-center gap-2">
+            <div className="grid grid-cols-[1fr_auto_1fr] sm:flex items-center gap-2 w-full sm:w-auto">
               <input
                 type="date"
                 value={customStart}
                 onChange={(e) => setCustomStart(e.target.value)}
-                className="min-h-[38px] px-2.5 border border-[#CBD5E1] shadow-xs rounded-lg text-xs tabular-nums"
+                className="w-full sm:w-auto min-w-0 min-h-[38px] px-2.5 border border-[#CBD5E1] shadow-xs rounded-lg text-xs tabular-nums bg-white"
               />
-              <span className="text-xs text-slate-400">a</span>
+              <span className="text-xs text-slate-400 text-center">a</span>
               <input
                 type="date"
                 value={customEnd}
                 onChange={(e) => setCustomEnd(e.target.value)}
-                className="min-h-[38px] px-2.5 border border-[#CBD5E1] shadow-xs rounded-lg text-xs tabular-nums"
+                className="w-full sm:w-auto min-w-0 min-h-[38px] px-2.5 border border-[#CBD5E1] shadow-xs rounded-lg text-xs tabular-nums bg-white"
               />
             </div>
           )}
@@ -370,7 +434,7 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
 
           <form
             onSubmit={handleApplyBuffer}
-            className="flex flex-wrap items-end gap-3 shrink-0"
+            className="flex flex-wrap items-end gap-3 lg:shrink-0 w-full lg:w-auto"
           >
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">
@@ -416,7 +480,7 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
       </div>
 
       {/* Financial KPIs (USD primary + Bolívares miniature) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
         <div className="bg-white border border-[#CBD5E1] shadow-xs rounded-2xl p-5">
           <div className="text-xs font-semibold text-slate-500">
             Ingresos Brutos (En Curso + Cerrados)
@@ -469,6 +533,37 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
           </div>
         </div>
 
+        <div className="bg-orange-50/80 border border-orange-200 shadow-xs rounded-2xl p-5">
+          <div className="text-xs font-bold text-[#C2410C] flex items-center gap-1.5">
+            <AlertOctagon className="w-4 h-4 shrink-0" />
+            Mermas y Roturas ($ pérdida al costo)
+          </div>
+          <div className="font-extrabold text-2xl text-[#DC2626] tabular-nums mt-1.5">
+            {financialSummary.shrinkageLossUsd > 0 ? '-' : ''}
+            {formatUsd(financialSummary.shrinkageLossUsd)}
+          </div>
+          <div className="text-[11px] text-orange-800 tabular-nums">
+            {formatBs(
+              financialSummary.shrinkageLossUsd * bcvState.officialRate
+            )}
+          </div>
+          <div className="mt-3 pt-3 border-t border-orange-200 text-xs text-orange-950 space-y-1 tabular-nums">
+            <div className="flex justify-between">
+              <span>Unidades perdidas:</span>
+              <span className="font-bold">
+                {financialSummary.shrinkageUnitsTotal} bot./unid.
+              </span>
+            </div>
+            <div className="flex justify-between text-[11px] text-orange-900">
+              <span>Eventos / Cava Gral.:</span>
+              <span className="font-semibold">
+                {formatUsd(financialSummary.shrinkageEventUsd)} /{' '}
+                {formatUsd(financialSummary.shrinkageGeneralUsd)}
+              </span>
+            </div>
+          </div>
+        </div>
+
         <div className="bg-white border border-[#CBD5E1] shadow-xs rounded-2xl p-5">
           <div className="text-xs font-semibold text-slate-500">
             Pago de Nómina a Empleados
@@ -485,7 +580,7 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
           </div>
         </div>
 
-        <div className="bg-[#ECFDF5] border border-[#10B981]/40 rounded-2xl p-5">
+        <div className="bg-[#ECFDF5] border border-[#10B981]/40 rounded-2xl p-5 sm:col-span-2 xl:col-span-1">
           <div className="text-xs font-bold uppercase tracking-wider text-[#065F46] flex items-center gap-1.5">
             <TrendingUp className="w-4 h-4" />
             Ganancia Neta Real
@@ -497,7 +592,7 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
             {formatBs(financialSummary.netProfitUsd * bcvState.officialRate)}
           </div>
           <div className="mt-3 pt-3 border-t border-[#10B981]/25 text-xs text-[#065F46] font-medium">
-            Ingresos Brutos − Costo Mercancía − Nómina
+            Ingresos Brutos − Costo Mercancía − Mermas y Roturas − Nómina
           </div>
         </div>
       </div>
@@ -562,6 +657,156 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
               )}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Detailed Audit: Mermas y Roturas (Pérdidas de Inventario) */}
+      <div className="bg-white border border-orange-200 shadow-xs rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-orange-200 bg-orange-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <AlertOctagon className="w-5 h-5 text-[#EA580C] shrink-0" />
+            <div>
+              <h3 className="font-display font-bold text-lg text-[#0F172A]">
+                Auditoría de Mermas y Roturas ($ pérdida al costo)
+              </h3>
+              <p className="text-xs text-slate-600">
+                Botellas partidas, reventadas en congelador o productos malos en
+                el período · {financialSummary.shrinkageUnitsTotal} unidades
+                perdidas ({formatUsd(financialSummary.shrinkageLossUsd)} al
+                costo)
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 sm:inline-flex gap-1 p-1 bg-white border border-orange-200 rounded-xl w-full sm:w-auto">
+            {(
+              [
+                ['all', 'Todos'],
+                ['evento', 'En Eventos'],
+                ['inventario_general', 'Inv. General'],
+              ] as const
+            ).map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setShrinkageOriginFilter(val)}
+                className={`min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                  shrinkageOriginFilter === val
+                    ? 'bg-[#EA580C] text-white'
+                    : 'text-slate-600 hover:text-[#0F172A]'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Reason Breakdown Summary Grid */}
+        <div className="p-4 sm:p-5 bg-slate-50/70 border-b border-slate-200 grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {financialSummary.shrinkageByReason.map((item) => (
+            <div
+              key={item.reason}
+              className="p-3 rounded-xl bg-white border border-slate-200 space-y-1"
+            >
+              <div className="text-[11px] font-bold text-slate-600 leading-snug">
+                {item.reason}
+              </div>
+              <div className="flex items-baseline justify-between gap-2 tabular-nums">
+                <span className="font-extrabold text-base text-[#0F172A]">
+                  {item.units}{' '}
+                  <span className="text-xs font-semibold text-slate-500">
+                    unid.
+                  </span>
+                </span>
+                <span className="text-xs font-extrabold text-[#DC2626]">
+                  -{formatUsd(item.lossUsd)}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Detailed Shrinkage Log */}
+        <div className="divide-y divide-[#E2E8F0] max-h-96 overflow-y-auto">
+          {(() => {
+            const visibleShrinkages =
+              financialSummary.shrinkagesFiltered.filter(
+                (s) =>
+                  shrinkageOriginFilter === 'all' ||
+                  s.origin === shrinkageOriginFilter
+              );
+
+            if (visibleShrinkages.length === 0) {
+              return (
+                <div className="p-7 text-center text-sm text-slate-500">
+                  Sin mermas ni roturas registradas en este período y filtro.
+                </div>
+              );
+            }
+
+            return visibleShrinkages.map((sh) => (
+              <div
+                key={sh.id}
+                className="px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 text-sm"
+              >
+                <div className="min-w-0 space-y-1 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-[#0F172A]">
+                      {sh.quantityUnits}× {sh.productName}
+                      {sh.productPresentation
+                        ? ` (${sh.productPresentation})`
+                        : ''}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md bg-orange-100 text-[#9A3412] text-[11px] font-bold">
+                      {sh.reason}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${
+                        sh.origin === 'evento'
+                          ? 'bg-blue-50 text-[#1D4ED8] border border-blue-200'
+                          : 'bg-slate-100 text-slate-700 border border-slate-200'
+                      }`}
+                    >
+                      {sh.origin === 'evento'
+                        ? `Evento: ${sh.eventName || 'Fiesta'}`
+                        : 'Inventario General'}
+                    </span>
+                  </div>
+                  {sh.observation && (
+                    <div className="text-xs text-slate-700">
+                      Observación: {sh.observation}
+                    </div>
+                  )}
+                  <div className="text-[11px] text-slate-500 tabular-nums">
+                    {formatDateSpanish(sh.date)} · {formatTime(sh.timestamp)} ·
+                    Registrado por: <strong>{sh.recordedByName}</strong> (
+                    {sh.recordedByRole}) · Costo unit.:{' '}
+                    {formatUsd(sh.unitCostUsd)} · $0.00 en caja
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="text-right tabular-nums">
+                    <div className="font-extrabold text-base text-[#DC2626]">
+                      -{formatUsd(sh.totalLossCostUsd)}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {formatBs(sh.totalLossCostBs)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmVoidShrinkage(sh)}
+                    title="Anular merma y devolver stock"
+                    className="min-w-[34px] min-h-[34px] rounded-lg text-slate-400 hover:text-[#EF4444] hover:bg-red-50 flex items-center justify-center transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ));
+          })()}
         </div>
       </div>
 
@@ -874,6 +1119,60 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
                     </div>
                   </div>
 
+                  {/* Mermas y Roturas del Evento Cerrado */}
+                  {(() => {
+                    const shiftShrinkages = shift.shrinkages || [];
+                    const shiftLossUsd =
+                      shift.shrinkageLossUsd !== undefined
+                        ? shift.shrinkageLossUsd
+                        : shiftShrinkages.reduce(
+                            (sum, s) => sum + s.totalLossCostUsd,
+                            0
+                          );
+                    const shiftLossUnits =
+                      shift.shrinkageUnitsTotal !== undefined
+                        ? shift.shrinkageUnitsTotal
+                        : shiftShrinkages.reduce(
+                            (sum, s) => sum + s.quantityUnits,
+                            0
+                          );
+
+                    return (
+                      <div className="p-3 rounded-xl bg-orange-50/80 border border-orange-200 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2 text-xs font-bold text-[#C2410C]">
+                          <span className="flex items-center gap-1.5">
+                            <AlertOctagon className="w-3.5 h-3.5 shrink-0" />
+                            Mermas y Roturas ({shiftLossUnits} unid.)
+                          </span>
+                          <span className="tabular-nums font-extrabold">
+                            Pérdida al costo: {formatUsd(shiftLossUsd)}
+                          </span>
+                        </div>
+                        {shiftShrinkages.length > 0 && (
+                          <div className="space-y-1 pt-0.5">
+                            {shiftShrinkages.map((sh) => (
+                              <div
+                                key={sh.id}
+                                className="text-xs text-orange-950 flex items-start justify-between gap-2"
+                              >
+                                <span>
+                                  <strong>
+                                    {sh.quantityUnits}× {sh.productName}
+                                  </strong>{' '}
+                                  — {sh.reason}
+                                  {sh.observation ? ` (${sh.observation})` : ''}
+                                </span>
+                                <span className="tabular-nums font-bold text-[#DC2626] shrink-0">
+                                  -{formatUsd(sh.totalLossCostUsd)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {shift.suspendedSales.length > 0 && (
                     <div className="p-3 rounded-xl bg-red-50 border border-red-200 space-y-1.5">
                       <div className="text-xs font-bold text-red-800 flex items-center gap-1.5">
@@ -898,6 +1197,47 @@ export const FinancePayrollModule: React.FC<FinancePayrollModuleProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Confirm Void / Delete Shrinkage Modal (Admin Only) */}
+      {confirmVoidShrinkage && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl border border-[#CBD5E1] shadow-2xl p-5 space-y-4">
+            <h3 className="font-display font-bold text-lg text-[#0F172A]">
+              ¿Anular registro de merma?
+            </h3>
+            <p className="text-sm text-slate-600">
+              Se eliminará el registro de{' '}
+              <strong className="text-[#0F172A]">
+                {confirmVoidShrinkage.quantityUnits}×{' '}
+                {confirmVoidShrinkage.productName}
+              </strong>{' '}
+              ({confirmVoidShrinkage.reason}, pérdida{' '}
+              {formatUsd(confirmVoidShrinkage.totalLossCostUsd)}) y se devolverá
+              automáticamente esa cantidad al stock disponible.
+            </p>
+            <div className="flex flex-wrap justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmVoidShrinkage(null)}
+                className="min-h-[42px] px-4 rounded-xl border border-[#CBD5E1] bg-white text-sm font-semibold text-slate-700"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onDeleteShrinkage(confirmVoidShrinkage.id, true);
+                  setConfirmVoidShrinkage(null);
+                }}
+                className="min-h-[42px] px-4 rounded-xl bg-[#DC2626] hover:bg-red-700 text-white text-sm font-bold flex items-center gap-1.5"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Anular y Devolver Stock
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

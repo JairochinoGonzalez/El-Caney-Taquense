@@ -150,6 +150,35 @@ export interface CourtesyRecord {
   totalCostUsd: number;
 }
 
+export type ShrinkageReason =
+  | 'Botella partida en servicio'
+  | 'Reventada en congelador'
+  | 'Producto defectuoso / malo'
+  | 'Otro';
+
+export type ShrinkageOrigin = 'evento' | 'inventario_general';
+
+export interface ShrinkageRecord {
+  id: string;
+  timestamp: string; // ISO string (fecha y hora automática)
+  date: string; // YYYY-MM-DD
+  origin: ShrinkageOrigin;
+  eventId?: string;
+  eventName?: string;
+  productId: string;
+  productName: string;
+  productPresentation?: string;
+  quantityUnits: number;
+  unitCostUsd: number;
+  totalLossCostUsd: number;
+  totalLossCostBs: number;
+  reason: ShrinkageReason;
+  observation?: string;
+  recordedByEmail: string;
+  recordedByName: string;
+  recordedByRole: UserRole;
+}
+
 export type InvoiceAttachmentType = 'image' | 'pdf';
 
 export type InvoiceAttachmentMime =
@@ -255,6 +284,9 @@ export interface ClosedShift {
   courtesies: CourtesyRecord[];
   suspendedSales: SaleRecord[];
   remainingStock: RemainingStockSnapshot[];
+  shrinkages?: ShrinkageRecord[];
+  shrinkageLossUsd?: number;
+  shrinkageUnitsTotal?: number;
 }
 
 export interface BcvRateState {

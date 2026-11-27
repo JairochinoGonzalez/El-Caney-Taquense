@@ -263,121 +263,149 @@ export const SidebarAndNav: React.FC<SidebarAndNavProps> = ({
       </aside>
 
       {/* Top Bar (All Viewports) */}
-      <header className="sticky top-0 z-20 lg:pl-64 bg-white border-b border-[#CBD5E1] pt-[env(safe-area-inset-top,0px)]">
-        <div className="px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3">
-          {/* Brand on Mobile/Tablet + Section Context */}
-          <div className="flex items-center gap-3 min-w-0">
-            <img
-              src="/logo.png"
-              alt="El Caney Taquense"
-              className="lg:hidden w-9 h-9 rounded-lg object-contain shrink-0 shadow-xs"
-            />
-            <div className="min-w-0">
-              <div className="lg:hidden font-display font-bold text-sm text-[#0F172A] truncate">
-                EL CANEY TAQUENSE
+      <header className="sticky top-0 z-20 w-full max-w-full lg:pl-64 bg-white border-b border-[#CBD5E1] pt-[env(safe-area-inset-top,0px)]">
+        <div className="w-full max-w-full px-3 sm:px-6 py-2.5 flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-2.5">
+          {/* Row 1: Brand/Section Context + Mobile Utility Actions */}
+          <div className="flex items-center justify-between gap-2 w-full sm:w-auto sm:flex-1 min-w-0">
+            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+              <img
+                src="/logo.png"
+                alt="El Caney Taquense"
+                className="lg:hidden w-8 h-8 sm:w-9 sm:h-9 rounded-lg object-contain shrink-0 shadow-xs"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="lg:hidden font-display font-bold text-sm text-[#0F172A] truncate">
+                  EL CANEY TAQUENSE
+                </div>
+                <div className="hidden lg:block font-display font-bold text-base text-[#0F172A] truncate">
+                  {navItems.find((n) => n.id === activeSection)?.label}
+                </div>
+                <div className="flex items-center gap-1.5 sm:gap-2 text-xs text-slate-500 min-w-0">
+                  <span className="font-semibold text-[#1D4ED8] tabular-nums shrink-0">
+                    BCV: {formatBs(bcvState.officialRate)}/$
+                  </span>
+                  {activeParty && (
+                    <>
+                      <span aria-hidden="true" className="shrink-0">
+                        ·
+                      </span>
+                      <span className="font-semibold text-[#047857] truncate">
+                        Activa: {activeParty.name}
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
-              <div className="hidden lg:block font-display font-bold text-base text-[#0F172A] truncate">
-                {navItems.find((n) => n.id === activeSection)?.label}
-              </div>
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <span className="font-semibold text-[#1D4ED8] tabular-nums">
-                  BCV: {formatBs(bcvState.officialRate)}/$
-                </span>
-                {activeParty && (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span className="font-semibold text-[#047857] truncate max-w-[160px] sm:max-w-xs">
-                      Activa: {activeParty.name}
-                    </span>
-                  </>
-                )}
-              </div>
+            </div>
+
+            {/* Mobile Utility Actions (always visible inside viewport right edge) */}
+            <div className="flex sm:hidden items-center gap-1.5 shrink-0">
+              <PWAInstallButton compact />
+              <button
+                type="button"
+                onClick={onRefreshBcv}
+                disabled={bcvState.isLoading}
+                aria-label="Actualizar Tasa BCV"
+                className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg border border-[#CBD5E1] text-slate-600 hover:bg-slate-100 shrink-0"
+              >
+                <RefreshCw
+                  className={`w-4 h-4 ${bcvState.isLoading ? 'animate-spin' : ''}`}
+                />
+              </button>
+              <button
+                type="button"
+                onClick={onSignOut}
+                aria-label="Cerrar sesión"
+                className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg border border-[#CBD5E1] text-slate-600 hover:bg-red-50 hover:text-[#EF4444] shrink-0"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
             </div>
           </div>
 
-          {/* Admin Role Preview Switcher OR Locked Station Badge + Mobile Refresh/SignOut */}
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="lg:hidden">
+          {/* Row 2 on mobile / Right cluster on sm+: Role Switcher + Tablet Utility Actions */}
+          <div className="flex flex-wrap items-center justify-end gap-2 w-full sm:w-auto min-w-0">
+            <div className="hidden sm:flex lg:hidden items-center gap-1.5 shrink-0">
               <PWAInstallButton compact />
+              <button
+                type="button"
+                onClick={onRefreshBcv}
+                disabled={bcvState.isLoading}
+                aria-label="Actualizar Tasa BCV"
+                className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg border border-[#CBD5E1] text-slate-600 hover:bg-slate-100"
+              >
+                <RefreshCw
+                  className={`w-4 h-4 ${bcvState.isLoading ? 'animate-spin' : ''}`}
+                />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={onRefreshBcv}
-              disabled={bcvState.isLoading}
-              aria-label="Actualizar Tasa BCV"
-              className="lg:hidden min-w-[38px] min-h-[38px] flex items-center justify-center rounded-lg border border-[#CBD5E1] text-slate-600 hover:bg-slate-100"
-            >
-              <RefreshCw
-                className={`w-4 h-4 ${bcvState.isLoading ? 'animate-spin' : ''}`}
-              />
-            </button>
 
             {actualRole === 'admin' ? (
               <div
                 role="group"
                 aria-label="Vista previa de estación"
-                className="inline-flex items-center p-1 bg-[#F1F5F9] border border-[#CBD5E1] rounded-xl"
+                className="grid grid-cols-4 sm:inline-flex items-center gap-1 sm:gap-0.5 p-1 bg-[#F1F5F9] border border-[#CBD5E1] rounded-xl w-full sm:w-auto"
               >
                 <button
                   type="button"
                   onClick={() => onPreviewRoleChange('admin')}
-                  className={`min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 ${
+                  className={`min-h-[34px] px-1.5 sm:px-2.5 py-1.5 sm:py-1 rounded-lg text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 transition-colors min-w-0 whitespace-nowrap ${
                     effectiveRole === 'admin'
                       ? 'bg-[#1D4ED8] text-white shadow-sm'
                       : 'text-slate-600 hover:text-[#0F172A]'
                   }`}
                 >
-                  <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                  <span>Admin</span>
+                  <ShieldCheck className="w-3.5 h-3.5 shrink-0 hidden min-[370px]:inline" />
+                  <span className="truncate">Admin</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => onPreviewRoleChange('taquilla')}
-                  className={`min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 ${
+                  className={`min-h-[34px] px-1.5 sm:px-2.5 py-1.5 sm:py-1 rounded-lg text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 transition-colors min-w-0 whitespace-nowrap ${
                     effectiveRole === 'taquilla'
                       ? 'bg-[#10B981] text-white shadow-sm'
                       : 'text-slate-600 hover:text-[#0F172A]'
                   }`}
                 >
-                  <Ticket className="w-3.5 h-3.5 shrink-0" />
-                  <span>Taquilla</span>
+                  <Ticket className="w-3.5 h-3.5 shrink-0 hidden min-[370px]:inline" />
+                  <span className="truncate">Taquilla</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => onPreviewRoleChange('caja')}
-                  className={`min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 ${
+                  className={`min-h-[34px] px-1.5 sm:px-2.5 py-1.5 sm:py-1 rounded-lg text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 transition-colors min-w-0 whitespace-nowrap ${
                     effectiveRole === 'caja'
                       ? 'bg-[#0F172A] text-white shadow-sm'
                       : 'text-slate-600 hover:text-[#0F172A]'
                   }`}
                 >
-                  <Beer className="w-3.5 h-3.5 shrink-0" />
-                  <span>Caja</span>
+                  <Beer className="w-3.5 h-3.5 shrink-0 hidden min-[370px]:inline" />
+                  <span className="truncate">Caja</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => onPreviewRoleChange('mesero')}
-                  className={`min-h-[34px] px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 ${
+                  className={`min-h-[34px] px-1.5 sm:px-2.5 py-1.5 sm:py-1 rounded-lg text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 transition-colors min-w-0 whitespace-nowrap ${
                     effectiveRole === 'mesero'
                       ? 'bg-[#F59E0B] text-white shadow-sm'
                       : 'text-slate-600 hover:text-[#0F172A]'
                   }`}
                 >
-                  <ClipboardList className="w-3.5 h-3.5 shrink-0" />
-                  <span>Mesero</span>
+                  <ClipboardList className="w-3.5 h-3.5 shrink-0 hidden min-[370px]:inline" />
+                  <span className="truncate">Mesero</span>
                 </button>
               </div>
             ) : (
-              <div className="px-3 py-1.5 rounded-xl bg-slate-100 border border-[#CBD5E1] text-xs font-bold text-[#0F172A] flex items-center gap-1.5">
+              <div className="w-full sm:w-auto max-w-full px-3 py-1.5 rounded-xl bg-slate-100 border border-[#CBD5E1] text-xs font-bold text-[#0F172A] flex items-center gap-1.5 min-w-0">
                 {effectiveRole === 'taquilla' ? (
-                  <Ticket className="w-3.5 h-3.5 text-[#10B981]" />
+                  <Ticket className="w-3.5 h-3.5 text-[#10B981] shrink-0" />
                 ) : effectiveRole === 'mesero' ? (
-                  <ClipboardList className="w-3.5 h-3.5 text-[#F59E0B]" />
+                  <ClipboardList className="w-3.5 h-3.5 text-[#F59E0B] shrink-0" />
                 ) : (
-                  <Beer className="w-3.5 h-3.5 text-[#1D4ED8]" />
+                  <Beer className="w-3.5 h-3.5 text-[#1D4ED8] shrink-0" />
                 )}
-                <span>{roleDisplayName}</span>
-                <span className="hidden sm:inline font-normal text-slate-500">
+                <span className="shrink-0">{roleDisplayName}</span>
+                <span className="font-normal text-slate-500 truncate">
                   · {userName}
                 </span>
               </div>
@@ -387,7 +415,7 @@ export const SidebarAndNav: React.FC<SidebarAndNavProps> = ({
               type="button"
               onClick={onSignOut}
               aria-label="Cerrar sesión"
-              className="lg:hidden min-w-[38px] min-h-[38px] flex items-center justify-center rounded-lg border border-[#CBD5E1] text-slate-600 hover:bg-red-50 hover:text-[#EF4444]"
+              className="hidden sm:flex lg:hidden min-w-[36px] min-h-[36px] items-center justify-center rounded-lg border border-[#CBD5E1] text-slate-600 hover:bg-red-50 hover:text-[#EF4444] shrink-0"
             >
               <LogOut className="w-4 h-4" />
             </button>

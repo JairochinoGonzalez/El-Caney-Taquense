@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
+  AlertOctagon,
   Beer,
   Camera,
   ClipboardList,
@@ -23,6 +24,9 @@ import {
   Product,
   ProductCategory,
   ProductUnitType,
+  ShrinkageOrigin,
+  ShrinkageReason,
+  ShrinkageRecord,
   StockRestockRecord,
   UserRole,
 } from '../types';
@@ -40,15 +44,18 @@ import { hasInvoiceAttachment } from '../utils/invoiceFileHelper';
 import { downloadStockReportPdf } from '../utils/pdfGenerator';
 import { InvoiceAttachmentPicker } from './InvoiceAttachmentPicker';
 import { InvoiceViewerModal } from './InvoiceViewerModal';
+import { ShrinkageModal } from './ShrinkageModal';
 
 interface InventoryModuleProps {
   role: UserRole;
   actualRole: UserRole;
   userEmail: string;
+  userName: string;
   allowEmployeeProductEdit: boolean;
   onToggleAllowEmployeeEdit: (allowed: boolean) => void;
   products: Product[];
   restocks: StockRestockRecord[];
+  shrinkages: ShrinkageRecord[];
   bcvRate: number;
   effectiveRate: number;
   onAddProduct: (
@@ -82,6 +89,15 @@ interface InventoryModuleProps {
     invoiceAttachment?: InvoiceAttachmentDraft | null;
     date: string;
   }) => void;
+  onRecordShrinkage: (params: {
+    productId: string;
+    quantityUnits: number;
+    reason: ShrinkageReason;
+    observation?: string;
+    origin: ShrinkageOrigin;
+    eventId?: string;
+    eventName?: string;
+  }) => Promise<void>;
   onDeleteProduct: (productId: string) => void;
 }
 
@@ -89,15 +105,18 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
   role,
   actualRole,
   userEmail,
+  userName,
   allowEmployeeProductEdit,
   onToggleAllowEmployeeEdit,
   products,
   restocks,
+  shrinkages,
   bcvRate,
   effectiveRate,
   onAddProduct,
   onUpdateProduct,
   onRestockProduct,
+  onRecordShrinkage,
   onDeleteProduct,
 }) => {
   const [search, setSearch] = useState('');
@@ -113,6 +132,8 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
   const canEditExistingProducts = role === 'admin' || allowEmployeeProductEdit;
 
   // Modals
+  const [showShrinkageModal, setShowShrinkageModal] = useState(false);
+  const [shrinkageFlash, setShrinkageFlash] = useState<string | null>(null);
   const [showRestockModal, setShowRestockModal] = useState(false);
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -505,6 +526,14 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
             </button>
             <button
               type="button"
+              onClick={() => setShowShrinkageModal(true)}
+              className="min-h-[44px] px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#EA580C] to-[#DC2626] hover:from-[#C2410C] hover:to-[#B91C1C] text-white text-sm font-bold flex items-center gap-2 transition-colors whitespace-nowrap shadow-xs"
+            >
+              <AlertOctagon className="w-4 h-4" />
+              Registrar Merma / Baja de Stock
+            </button>
+            <button
+              type="button"
               onClick={handleOpenNewProduct}
               className="min-h-[44px] px-4 py-2.5 rounded-xl bg-[#0F172A] hover:bg-slate-800 text-white text-sm font-semibold flex items-center gap-2 transition-colors whitespace-nowrap"
             >
@@ -533,6 +562,22 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
             </button>
           </div>
         </div>
+
+        {shrinkageFlash && (
+          <div className="p-3 rounded-xl bg-orange-50 border border-orange-200 text-xs font-bold text-[#C2410C] flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2">
+              <AlertOctagon className="w-4 h-4 shrink-0" />
+              {shrinkageFlash}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShrinkageFlash(null)}
+              className="text-orange-700 hover:text-orange-950"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* Owner Delegation Control */}
         {role === 'admin' ? (
@@ -1758,6 +1803,81 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
           </div>
         </div>
       )}
+      {/* Recent Mermas y Roturas (Inventory General & Events Audit) */}
+      <div className="bg-white border border-orange-200 shadow-xs rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-orange-200 bg-orange-50/70 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <AlertOctagon className="w-5 h-5 text-[#EA580C]" />
+            <div>
+              <h3 className="font-display font-bold text-base text-[#0F172A]">
+                Historial Reciente de Mermas y Roturas
+              </h3>
+              <p className="text-xs text-slate-600">
+                Bajas de stock fuera de evento y roturas durante fiestas ($0.00 en caja)
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowShrinkageModal(true)}
+            className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-[#EA580C] hover:bg-[#C2410C] text-white text-xs font-bold flex items-center gap-1.5"
+          >
+            <AlertOctagon className="w-3.5 h-3.5" />
+            Nueva Merma
+          </button>
+        </div>
+
+        <div className="divide-y divide-slate-200 max-h-80 overflow-y-auto">
+          {shrinkages.length === 0 ? (
+            <div className="p-6 text-center text-sm text-slate-500">
+              No se han registrado mermas ni roturas de inventario todavía.
+            </div>
+          ) : (
+            shrinkages.slice(0, 20).map((sh) => (
+              <div
+                key={sh.id}
+                className="px-5 py-3.5 flex flex-wrap items-start justify-between gap-3 text-sm"
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-[#0F172A]">
+                      -{sh.quantityUnits}× {sh.productName}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md bg-orange-100 text-[#9A3412] text-[11px] font-bold">
+                      {sh.reason}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-semibold">
+                      {sh.origin === 'evento'
+                        ? `Evento: ${sh.eventName || 'Fiesta'}`
+                        : 'Inventario General'}
+                    </span>
+                  </div>
+                  {sh.observation && (
+                    <div className="text-xs text-slate-600">
+                      Obs.: {sh.observation}
+                    </div>
+                  )}
+                  <div className="text-[11px] text-slate-500 tabular-nums">
+                    {formatDateSpanish(sh.date)} · {formatTime(sh.timestamp)} ·
+                    Registró: {sh.recordedByName}
+                  </div>
+                </div>
+                {role === 'admin' && (
+                  <div className="text-right tabular-nums shrink-0">
+                    <div className="font-extrabold text-sm text-[#DC2626]">
+                      -{formatUsd(sh.totalLossCostUsd)}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {formatBs(sh.totalLossCostBs)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
       {/* Invoice / Receipt Viewer Modal */}
       {viewingInvoice && (
         <InvoiceViewerModal
@@ -1769,6 +1889,26 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
           onClose={() => setViewingInvoice(null)}
         />
       )}
+
+      {/* Modal: Registrar Merma / Baja de Stock (Inventario General) */}
+      <ShrinkageModal
+        isOpen={showShrinkageModal}
+        onClose={() => setShowShrinkageModal(false)}
+        products={products}
+        bcvRate={bcvRate}
+        origin="inventario_general"
+        userName={userName}
+        userEmail={userEmail}
+        userRole={role}
+        showCostPreview={role === 'admin'}
+        onSubmit={async (params) => {
+          await onRecordShrinkage(params);
+          setShrinkageFlash(
+            'Merma registrada y descontada del stock disponible ($0.00 en caja).'
+          );
+          setTimeout(() => setShrinkageFlash(null), 4000);
+        }}
+      />
     </div>
   );
 };

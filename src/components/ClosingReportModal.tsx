@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  AlertOctagon,
   AlertTriangle,
   CheckCircle2,
   Download,
@@ -224,6 +225,72 @@ export const ClosingReportModal: React.FC<ClosingReportModalProps> = ({
               </div>
             )}
           </div>
+
+          {/* Mermas y Roturas ($ pérdida al costo) */}
+          {(() => {
+            const eventShrinkages = shift.shrinkages || [];
+            const totalLossUsd =
+              shift.shrinkageLossUsd !== undefined
+                ? shift.shrinkageLossUsd
+                : eventShrinkages.reduce((sum, s) => sum + s.totalLossCostUsd, 0);
+            const totalUnits =
+              shift.shrinkageUnitsTotal !== undefined
+                ? shift.shrinkageUnitsTotal
+                : eventShrinkages.reduce((sum, s) => sum + s.quantityUnits, 0);
+
+            return (
+              <div>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                  <h3 className="font-display font-bold text-base text-[#EA580C] flex items-center gap-2">
+                    <AlertOctagon className="w-4 h-4" />
+                    Mermas y Roturas ({totalUnits} unid.)
+                  </h3>
+                  <span className="px-2.5 py-1 rounded-lg bg-orange-50 border border-orange-200 text-xs font-extrabold text-[#C2410C] tabular-nums">
+                    Pérdida al costo: {formatUsd(totalLossUsd)}
+                  </span>
+                </div>
+
+                {eventShrinkages.length === 0 ? (
+                  <p className="text-sm text-slate-500">
+                    Sin mermas ni roturas registradas en este evento ($0.00).
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {eventShrinkages.map((sh) => (
+                      <div
+                        key={sh.id}
+                        className="p-3.5 rounded-xl bg-orange-50/80 border border-orange-200 text-sm"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="font-semibold text-[#0F172A]">
+                            {sh.quantityUnits}× {sh.productName}
+                            {sh.productPresentation
+                              ? ` (${sh.productPresentation})`
+                              : ''}
+                          </div>
+                          <span className="font-extrabold text-[#C2410C] tabular-nums shrink-0">
+                            -{formatUsd(sh.totalLossCostUsd)}
+                          </span>
+                        </div>
+                        <div className="text-xs font-semibold text-orange-900 mt-0.5">
+                          Motivo: {sh.reason}
+                        </div>
+                        {sh.observation && (
+                          <div className="text-xs text-slate-700 mt-0.5">
+                            Obs.: {sh.observation}
+                          </div>
+                        )}
+                        <div className="text-[11px] text-slate-500 mt-1">
+                          {formatTime(sh.timestamp)} · Registró:{' '}
+                          {sh.recordedByName} · $0.00 en caja
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Auditoría de Ventas Suspendidas */}
           <div>

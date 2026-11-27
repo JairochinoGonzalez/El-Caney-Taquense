@@ -165,6 +165,9 @@
         "courtesies": { "type": "array" },
         "suspendedSales": { "type": "array" },
         "remainingStock": { "type": "array" },
+        "shrinkages": { "type": "array" },
+        "shrinkageLossUsd": { "type": "number" },
+        "shrinkageUnitsTotal": { "type": "number" },
         "staffEmails": { "type": "array" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
@@ -258,6 +261,35 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "restockId", "chunkIndex", "data", "adminEmails", "staffEmails", "createdAt"]
+    },
+    "ShrinkageRecord": {
+      "title": "ShrinkageRecord",
+      "description": "Inventory shrinkage, breakage, or defective product loss record linked to an active event or general inventory.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 40 },
+        "date": { "type": "string", "minLength": 8, "maxLength": 20 },
+        "origin": { "type": "string", "enum": ["evento", "inventario_general"] },
+        "eventId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "eventName": { "type": "string", "maxLength": 120 },
+        "productId": { "type": "string", "pattern": "^[a-zA-Z0-9_\\-]+$", "maxLength": 128 },
+        "productName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "productPresentation": { "type": "string", "maxLength": 120 },
+        "quantityUnits": { "type": "number" },
+        "unitCostUsd": { "type": "number" },
+        "totalLossCostUsd": { "type": "number" },
+        "totalLossCostBs": { "type": "number" },
+        "reason": { "type": "string", "enum": ["Botella partida en servicio", "Reventada en congelador", "Producto defectuoso / malo", "Otro"] },
+        "observation": { "type": "string", "maxLength": 300 },
+        "recordedByEmail": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "recordedByName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "recordedByRole": { "type": "string", "enum": ["admin", "taquilla", "caja", "mesero"] },
+        "staffEmails": { "type": "array" },
+        "adminEmails": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "timestamp", "date", "origin", "productId", "productName", "quantityUnits", "unitCostUsd", "totalLossCostUsd", "totalLossCostBs", "reason", "recordedByEmail", "recordedByName", "recordedByRole", "staffEmails", "adminEmails", "createdAt"]
     }
   },
   "firestore": {
@@ -304,6 +336,10 @@
     "/restocks/{restockId}/attachmentChunks/{chunkId}": {
       "schema": { "$ref": "#/entities/RestockAttachmentChunk" },
       "description": "Chunked PDF attachment segments for restock purchase invoices."
+    },
+    "/shrinkages/{shrinkageId}": {
+      "schema": { "$ref": "#/entities/ShrinkageRecord" },
+      "description": "Inventory shrinkage, breakage, and defective product loss records."
     }
   }
 }
